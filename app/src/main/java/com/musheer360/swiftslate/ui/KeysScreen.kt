@@ -28,6 +28,8 @@ import androidx.compose.ui.unit.sp
 import com.musheer360.swiftslate.R
 import com.musheer360.swiftslate.api.GeminiClient
 import com.musheer360.swiftslate.api.OpenAICompatibleClient
+import com.musheer360.swiftslate.api.CodexApiClient
+import com.musheer360.swiftslate.api.CopilotApiClient
 import com.musheer360.swiftslate.manager.KeyManager
 import com.musheer360.swiftslate.model.ProviderType
 import com.musheer360.swiftslate.ui.components.ScreenTitle
@@ -101,9 +103,15 @@ fun KeysScreen(keyManager: KeyManager, prefs: SharedPreferences) {
                             val result = run {
                                 val providerType = prefs.getString("provider_type", ProviderType.GEMINI) ?: ProviderType.GEMINI
                                 val customEndpoint = prefs.getString("custom_endpoint", "") ?: ""
+                                val codexApiClient = CodexApiClient()
+                                val copilotApiClient = CopilotApiClient()
                                 when {
                                     providerType == ProviderType.GROQ ->
                                         openAIClient.validateKey(trimmedKey, "https://api.groq.com/openai/v1")
+                                    providerType == ProviderType.CODEX_API ->
+                                        codexApiClient.validateKey(trimmedKey)
+                                    providerType == ProviderType.COPILOT ->
+                                        copilotApiClient.validateKey(trimmedKey)
                                     providerType == ProviderType.CUSTOM && customEndpoint.isNotBlank() ->
                                         openAIClient.validateKey(trimmedKey, customEndpoint)
                                     else ->
@@ -147,6 +155,8 @@ fun KeysScreen(keyManager: KeyManager, prefs: SharedPreferences) {
             }
             val (apiKeyUrl, providerName) = when (prefs.getString("provider_type", ProviderType.GEMINI) ?: ProviderType.GEMINI) {
                 ProviderType.GROQ -> "https://console.groq.com/keys" to "Groq"
+                ProviderType.CODEX_API -> "https://chatbot.codexapi.workers.dev/docs" to "CodexAPI"
+                ProviderType.COPILOT -> null to null
                 ProviderType.CUSTOM -> null to null
                 else -> "https://aistudio.google.com/api-keys" to "Gemini"
             }
@@ -158,6 +168,20 @@ fun KeysScreen(keyManager: KeyManager, prefs: SharedPreferences) {
                     modifier = Modifier
                         .clickable(interactionSource = null, indication = null) { uriHandler.openUri(apiKeyUrl) }
                         .padding(top = 8.dp)
+                )
+            } else if (prefs.getString("provider_type", ProviderType.GEMINI) == ProviderType.COPILOT) {
+                Text(
+                    text = "Copilot API is free - no key required!",
+                    color = MaterialTheme.colorScheme.primary,
+                    fontSize = 13.sp,
+                    modifier = Modifier.padding(top = 8.dp)
+                )
+            } else if (prefs.getString("provider_type", ProviderType.GEMINI) == ProviderType.CODEX_API) {
+                Text(
+                    text = "CodexAPI is free - no key required!",
+                    color = MaterialTheme.colorScheme.primary,
+                    fontSize = 13.sp,
+                    modifier = Modifier.padding(top = 8.dp)
                 )
             }
         }
