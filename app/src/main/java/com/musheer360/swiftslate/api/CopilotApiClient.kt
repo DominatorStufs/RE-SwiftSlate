@@ -50,7 +50,7 @@ class CopilotApiClient {
         temperature: Double
     ): Result<GenerateResult> = withContext(Dispatchers.IO) {
         var connection: HttpURLConnection? = null
-        return try {
+        try {
             connection = URL("$BASE_URL/v1/chat/completions").openConnection() as HttpURLConnection
             connection.requestMethod = "POST"
             connection.setRequestProperty("Content-Type", "application/json")
@@ -90,13 +90,13 @@ class CopilotApiClient {
                     val choice = choices.getJSONObject(0)
                     val message = choice.optJSONObject("message")
                     var resultText = message?.optString("content", "") ?: ""
-                    
-                    if (resultText.isBlank()) {
-                        return@withContext Result.failure(Exception("Model returned empty response"))
-                    }
 
-                    resultText = ApiClientUtils.stripMarkdownFences(resultText)
-                    Result.success(GenerateResult(resultText, false))
+                    if (resultText.isBlank()) {
+                        Result.failure(Exception("Model returned empty response"))
+                    } else {
+                        resultText = ApiClientUtils.stripMarkdownFences(resultText)
+                        Result.success(GenerateResult(resultText, false))
+                    }
                 } else {
                     Result.failure(Exception("No choices found in response"))
                 }
@@ -110,7 +110,7 @@ class CopilotApiClient {
         } catch (e: Exception) {
             val apiError = when (e) {
                 is ApiException -> e.apiError
-                is SocketTimeoutException, is UnknownHostException, is ConnectException, is java.net.SocketException -> 
+                is SocketTimeoutException, is UnknownHostException, is ConnectException, is java.net.SocketException ->
                     ApiError.Network(e.message ?: "Network error")
                 is org.json.JSONException -> ApiError.Other("Invalid response from server")
                 else -> ApiError.Other(e.message ?: "Unknown error")

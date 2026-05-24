@@ -33,9 +33,8 @@ class CodexApiClient {
                 val response = ApiClientUtils.readResponseBounded(connection)
                 val jsonResponse = JSONObject(response)
                 val dataArray = jsonResponse.optJSONArray("data")
-                
+
                 val models = mutableListOf<String>()
-                // Add "Random" as first option
                 models.add(RANDOM_MODEL_ID)
                 if (dataArray != null) {
                     for (i in 0 until dataArray.length()) {
@@ -82,10 +81,6 @@ class CodexApiClient {
         }
     }
 
-    /**
-     * If model is RANDOM_MODEL_ID, we don't pass a model param so the API
-     * picks any available model on its own.
-     */
     suspend fun generate(
         prompt: String,
         text: String,
@@ -93,16 +88,15 @@ class CodexApiClient {
         temperature: Double
     ): Result<GenerateResult> = withContext(Dispatchers.IO) {
         var connection: HttpURLConnection? = null
-        return try {
+        try {
             val encodedText = java.net.URLEncoder.encode(text, "UTF-8")
             val baseUrl = if (model == RANDOM_MODEL_ID || model.isBlank()) {
-                // No model param → API uses any random available model
                 "$BASE_URL/?prompt=$encodedText"
             } else {
                 val safeModel = model.replace(Regex("[^a-zA-Z0-9._\\-/: ]"), "")
                 "$BASE_URL/?prompt=$encodedText&model=$safeModel"
             }
-            
+
             connection = URL(baseUrl).openConnection() as HttpURLConnection
             connection.requestMethod = "GET"
             connection.connectTimeout = 30_000
@@ -112,7 +106,6 @@ class CodexApiClient {
             if (responseCode in 200..299) {
                 val response = ApiClientUtils.readResponseBounded(connection)
                 var resultText = response.trim()
-                
                 resultText = ApiClientUtils.stripMarkdownFences(resultText)
                 Result.success(GenerateResult(resultText, false))
             } else {
@@ -122,7 +115,7 @@ class CodexApiClient {
             }
         } catch (e: Exception) {
             val apiError = when (e) {
-                is SocketTimeoutException, is UnknownHostException, is ConnectException, is java.net.SocketException -> 
+                is SocketTimeoutException, is UnknownHostException, is ConnectException, is java.net.SocketException ->
                     ApiError.Network(e.message ?: "Network error")
                 is org.json.JSONException -> ApiError.Other("Invalid response from server")
                 else -> ApiError.Other(e.message ?: "Unknown error")
