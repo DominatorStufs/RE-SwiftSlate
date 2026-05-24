@@ -10,220 +10,83 @@ on:
       - 'gradle/**'
       - 'gradle.properties'
       - '.github/workflows/**'
-    tags: ['v*']
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
-  contents: read
+  contents: write
 
 env:
   GRADLE_OPTS: -Dorg.gradle.jvmargs="-Xmx3g -Dfile.encoding=UTF-8 -XX:+UseG1GC"
 
 jobs:
-  version:
-    name: Determine Version
+  build:
+    name: Build APK
     runs-on: ubuntu-latest
-    timeout-minutes: 5
-    outputs:
-      tag: ${{ steps.version.outputs.tag }}
-      version_name: ${{ steps.version.outputs.version_name }}
-      version_code: ${{ steps.version.outputs.version_code }}
-      create_tag: ${{ steps.version.outputs.create_tag }}
+    timeout-minutes: 30
+
     steps:
       - name: Checkout code
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          fetch-tags: true
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
 
       - name: Determine version
         id: version
         shell: bash
         run: |
-          BASE_VERSION=$(grep 'val baseVersion' app/build.gradle.kts | sed 's/.*"\(.*\)".*/\1/')
-          if [ -z "$BASE_VERSION" ]; then
-            BASE_VERSION="1.0"
-          fi
-
-          if [[ "${{ github.ref }}" == refs/tags/v* ]]; then
-            TAG="${{ github.ref_name }}"
-            CREATE_TAG=false
-          else
-            PATCH=$(git tag -l "v${BASE_VERSION}.*" | grep -v beta | sed "s/v${BASE_VERSION}\.//" | sort -n | tail -1)
-            NEXT=$((${PATCH:--1} + 1))
-            TAG="v${BASE_VERSION}.${NEXT}"
-            CREATE_TAG=true
-          fi
-
-          VERSION_NAME="${TAG#v}"
           VERSION_CODE=$(git rev-list --count HEAD)
-
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-          echo "version_name=$VERSION_NAME" >> "$GITHUB_OUTPUT"
+          VERSION_NAME="1.0.${VERSION_CODE}"
+          TAG="v${VERSION_NAME}"
           echo "version_code=$VERSION_CODE" >> "$GITHUB_OUTPUT"
-          echo "create_tag=${CREATE_TAG}" >> "$GITHUB_OUTPUT"
-
-  lint:
-    name: Lint
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-
-      - name: Set up JDK 21
-        uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v5.2.0
-        with:
-          java-version: '21'
-          distribution: 'temurin'
-
-      - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@50e97c2cd7a37755bbfafc9c5b7cafaece252f6e # v6.1.0
-        with:
-          cache-encryption-key: ${{ secrets.GRADLE_CACHE_ENCRYPTION_KEY }}
-          gradle-home-cache-cleanup: true
-
-      - name: Run lint
-        id: lint
-        shell: bash
-        run: |
-          result=1
-          for i in 1 2 3; do
-            ./gradlew lint --parallel --build-cache --no-daemon --configuration-cache-problems=warn && { result=0; break; }
-            echo "::warning::Lint attempt $i failed, retrying..."
-            sleep 10
-          done
-          exit $result
-
-      - name: Upload lint results
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: lint-results
-          path: app/build/reports/lint-results-*.html
-          retention-days: 14
-
-  test:
-    name: Unit Tests
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-
-      - name: Set up JDK 21
-        uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v5.2.0
-        with:
-          java-version: '21'
-          distribution: 'temurin'
-
-      - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@50e97c2cd7a37755bbfafc9c5b7cafaece252f6e # v6.1.0
-        with:
-          cache-encryption-key: ${{ secrets.GRADLE_CACHE_ENCRYPTION_KEY }}
-          gradle-home-cache-cleanup: true
-
-      - name: Run unit tests
-        shell: bash
-        run: |
-          result=1
-          for i in 1 2 3; do
-            ./gradlew test --parallel --build-cache --no-daemon --configuration-cache-problems=warn && { result=0; break; }
-            echo "::warning::Test attempt $i failed, retrying..."
-            sleep 10
-          done
-          exit $result
-
-      - name: Upload test results
-        if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: test-results
-          path: app/build/reports/tests/
-          retention-days: 14
-
-  build:
-    name: Build APK
-    needs: [version, lint, test]
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    permissions:
-      contents: write
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-
-      - name: Set up JDK 21
-        uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654 # v5.2.0
-        with:
-          java-version: '21'
-          distribution: 'temurin'
-
-      - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@50e97c2cd7a37755bbfafc9c5b7cafaece252f6e # v6.1.0
-        with:
-          cache-encryption-key: ${{ secrets.GRADLE_CACHE_ENCRYPTION_KEY }}
-          gradle-home-cache-cleanup: true
+          echo "version_name=$VERSION_NAME" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
 
       - name: Build Debug APK
         shell: bash
         run: |
-          result=1
-          for i in 1 2 3; do
-            ./gradlew assembleDebug --parallel --build-cache --no-daemon --configuration-cache-problems=warn \
-              -PversionCode=${{ needs.version.outputs.version_code }} \
-              -PversionName=${{ needs.version.outputs.version_name }} && { result=0; break; }
-            echo "::warning::Build attempt $i failed, retrying..."
-            sleep 15
-          done
-          exit $result
+          ./gradlew assembleDebug \
+            --no-daemon \
+            --build-cache \
+            -PversionCode=${{ steps.version.outputs.version_code }} \
+            -PversionName=${{ steps.version.outputs.version_name }}
 
       - name: Rename APK
         shell: bash
-        run: mv app/build/outputs/apk/debug/app-debug.apk app/build/outputs/apk/debug/SwiftSlate-${{ needs.version.outputs.tag }}.apk
+        run: |
+          mv app/build/outputs/apk/debug/app-debug.apk \
+             app/build/outputs/apk/debug/SwiftSlate-${{ steps.version.outputs.tag }}.apk
 
       - name: Upload APK artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@v4
         with:
-          name: SwiftSlate-${{ needs.version.outputs.tag }}
+          name: SwiftSlate-${{ steps.version.outputs.tag }}
           path: app/build/outputs/apk/debug/SwiftSlate-*.apk
           retention-days: 90
 
-      - name: Create Release
-        uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda # v3.0.0
-        if: needs.version.outputs.create_tag == 'true'
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ needs.version.outputs.tag }}
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: SwiftSlate ${{ steps.version.outputs.tag }}
+          body: |
+            ## What's New
+            - Added CodexAPI free AI provider support
+            - Added Copilot (unofficial) free AI provider support
+            - Random model selection for CodexAPI
           files: app/build/outputs/apk/debug/SwiftSlate-*.apk
-          name: SwiftSlate ${{ needs.version.outputs.tag }}
-          body: "Add CodexAPI and Copilot free AI provider support"
           draft: false
           prerelease: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-  notify-failure:
-    name: Notify on Failure
-    needs: [version, lint, test, build]
-    if: failure()
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions:
-      issues: write
-    steps:
-      - name: Create failure issue
-        shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh issue create \
-            --repo "${{ github.repository }}" \
-            --title "CI failure on ${GITHUB_REF_NAME} ($(date +%Y-%m-%d))" \
-            --body "Pipeline failed for commit [\`${GITHUB_SHA::7}\`](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/commit/${GITHUB_SHA}).
-
-          **Run:** [${GITHUB_RUN_ID}](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID})
-          **Branch:** \`${GITHUB_REF_NAME}\`" \
-            --label "bug"
