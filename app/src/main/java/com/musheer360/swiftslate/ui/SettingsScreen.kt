@@ -279,7 +279,7 @@ fun SettingsScreen(commandManager: CommandManager, prefs: SharedPreferences) {
                     ) {
                         geminiModels.forEach { model ->
                             DropdownMenuItem(
-                                text = { Text(model) },
+                                text = { Text(if (model == CodexApiClient.RANDOM_MODEL_ID) "Random (Any Model)" else model) },
                                 onClick = {
                                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                                     selectedModel = model
@@ -315,7 +315,7 @@ fun SettingsScreen(commandManager: CommandManager, prefs: SharedPreferences) {
                     ) {
                         groqModels.forEach { model ->
                             DropdownMenuItem(
-                                text = { Text(model) },
+                                text = { Text(if (model == CodexApiClient.RANDOM_MODEL_ID) "Random (Any Model)" else model) },
                                 onClick = {
                                     haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                                     groqModel = model
