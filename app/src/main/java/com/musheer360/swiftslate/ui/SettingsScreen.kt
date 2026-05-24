@@ -28,6 +28,8 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import com.musheer360.swiftslate.api.CodexApiClient
+import com.musheer360.swiftslate.api.CopilotApiClient
 import com.musheer360.swiftslate.manager.CommandManager
 import com.musheer360.swiftslate.model.ProviderType
 import com.musheer360.swiftslate.ui.components.ScreenTitle
@@ -57,6 +59,11 @@ fun SettingsScreen(commandManager: CommandManager, prefs: SharedPreferences) {
     var groqModelExpanded by remember { mutableStateOf(false) }
     val groqModels = listOf("llama-3.3-70b-versatile", "llama-3.1-8b-instant", "openai/gpt-oss-120b", "openai/gpt-oss-20b", "meta-llama/llama-4-scout-17b-16e-instruct")
 
+    var codexApiModel by remember { mutableStateOf(prefs.getString("codex_api_model", "gpt-5") ?: "gpt-5") }
+    var codexApiModelExpanded by remember { mutableStateOf(false) }
+    var codexApiModels by remember { mutableStateOf<List<String>>(emptyList()) }
+    var loadingCodexModels by remember { mutableStateOf(false) }
+
     var customEndpoint by rememberSaveable { mutableStateOf(prefs.getString("custom_endpoint", "") ?: "") }
     var customModel by rememberSaveable { mutableStateOf(prefs.getString("custom_model", "") ?: "") }
     var endpointError by remember { mutableStateOf<String?>(null) }
@@ -74,6 +81,20 @@ fun SettingsScreen(commandManager: CommandManager, prefs: SharedPreferences) {
     var backupMessage by remember { mutableStateOf<String?>(null) }
     var backupSuccess by remember { mutableStateOf(false) }
     var showImportConfirm by remember { mutableStateOf(false) }
+
+    val codexApiClient = remember { CodexApiClient() }
+    val copilotApiClient = remember { CopilotApiClient() }
+
+    LaunchedEffect(providerType) {
+        if (providerType == ProviderType.CODEX_API && codexApiModels.isEmpty()) {
+            loadingCodexModels = true
+            val result = codexApiClient.getAvailableModels()
+            if (result.isSuccess) {
+                codexApiModels = result.getOrNull() ?: emptyList()
+            }
+            loadingCodexModels = false
+        }
+    }
 
     DisposableEffect(Unit) {
         onDispose {
@@ -156,7 +177,6 @@ fun SettingsScreen(commandManager: CommandManager, prefs: SharedPreferences) {
     ) {
         ScreenTitle(stringResource(R.string.settings_title))
 
-        // Card 1: Provider + Model
         SlateCard {
             Text(
                 text = stringResource(R.string.settings_provider_title),
@@ -172,11 +192,12 @@ fun SettingsScreen(commandManager: CommandManager, prefs: SharedPreferences) {
                     value = when (providerType) {
                         ProviderType.GEMINI -> stringResource(R.string.settings_provider_gemini)
                         ProviderType.GROQ -> stringResource(R.string.settings_provider_groq)
+                        ProviderType.CODEX_API -> "CodexAPI (Free)"
+                        ProviderType.COPILOT -> "Copilot (Free - Unofficial)"
                         else -> stringResource(R.string.settings_provider_custom)
                     },
                     onValueChange = {},
                     readOnly = true,
-                    
                     modifier = Modifier.menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable)
                 )
                 ExposedDropdownMenu(
@@ -204,6 +225,24 @@ fun SettingsScreen(commandManager: CommandManager, prefs: SharedPreferences) {
                         }
                     )
                     DropdownMenuItem(
+                        text = { Text("CodexAPI (Free)") },
+                        onClick = {
+                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            providerType = ProviderType.CODEX_API
+                            prefs.edit().putString("provider_type", ProviderType.CODEX_API).apply()
+                            providerExpanded = false
+                        }
+                    )
+                    DropdownMenuItem(
+                        text = { Text("Copilot (Free - Unofficial)") },
+                        onClick = {
+                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            providerType = ProviderType.COPILOT
+                            prefs.edit().putString("provider_type", ProviderType.COPILOT).apply()
+                            providerExpanded = false
+                        }
+                    )
+                    DropdownMenuItem(
                         text = { Text(stringResource(R.string.settings_provider_custom)) },
                         onClick = {
                             haptic.performHapticFeedback(HapticFeedbackType.LongPress)
@@ -215,6 +254,7 @@ fun SettingsScreen(commandManager: CommandManager, prefs: SharedPreferences) {
                 }
             }
             Spacer(modifier = Modifier.height(8.dp))
+            
             if (providerType == ProviderType.GEMINI) {
                 Text(
                     text = stringResource(R.string.settings_model_title),
@@ -230,7 +270,6 @@ fun SettingsScreen(commandManager: CommandManager, prefs: SharedPreferences) {
                         value = selectedModel,
                         onValueChange = {},
                         readOnly = true,
-                        
                         modifier = Modifier.menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable)
                     )
                     ExposedDropdownMenu(
@@ -267,7 +306,6 @@ fun SettingsScreen(commandManager: CommandManager, prefs: SharedPreferences) {
                         value = groqModel,
                         onValueChange = {},
                         readOnly = true,
-                        
                         modifier = Modifier.menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable)
                     )
                     ExposedDropdownMenu(
@@ -289,6 +327,68 @@ fun SettingsScreen(commandManager: CommandManager, prefs: SharedPreferences) {
                         }
                     }
                 }
+            } else if (providerType == ProviderType.CODEX_API) {
+                Text(
+                    text = stringResource(R.string.settings_model_title),
+                    fontSize = 13.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                ExposedDropdownMenuBox(
+                    expanded = codexApiModelExpanded && codexApiModels.isNotEmpty(),
+                    onExpandedChange = { 
+                        if (codexApiModels.isEmpty() && !loadingCodexModels) {
+                            scope.launch {
+                                loadingCodexModels = true
+                                val result = codexApiClient.getAvailableModels()
+                                if (result.isSuccess) {
+                                    codexApiModels = result.getOrNull() ?: emptyList()
+                                }
+                                loadingCodexModels = false
+                            }
+                        }
+                        codexApiModelExpanded = !codexApiModelExpanded 
+                    }
+                ) {
+                    SlateTextField(
+                        value = if (loadingCodexModels) "Loading..." else codexApiModel,
+                        onValueChange = {},
+                        readOnly = true,
+                        modifier = Modifier.menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable)
+                    )
+                    if (codexApiModels.isNotEmpty()) {
+                        ExposedDropdownMenu(
+                            containerColor = MaterialTheme.colorScheme.surface,
+                            shape = RoundedCornerShape(10.dp),
+                            expanded = codexApiModelExpanded,
+                            onDismissRequest = { codexApiModelExpanded = false }
+                        ) {
+                            codexApiModels.forEach { model ->
+                                DropdownMenuItem(
+                                    text = { Text(model) },
+                                    onClick = {
+                                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                        codexApiModel = model
+                                        prefs.edit().putString("codex_api_model", model).apply()
+                                        codexApiModelExpanded = false
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }
+            } else if (providerType == ProviderType.COPILOT) {
+                Text(
+                    text = "Using Copilot Model",
+                    fontSize = 13.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                SlateTextField(
+                    value = "copilot",
+                    onValueChange = {},
+                    readOnly = true
+                )
             } else {
                 Text(
                     text = stringResource(R.string.settings_endpoint_title),
@@ -320,7 +420,6 @@ fun SettingsScreen(commandManager: CommandManager, prefs: SharedPreferences) {
                         }
                     },
                     placeholder = { Text(stringResource(R.string.settings_endpoint_placeholder)) },
-                    
                     isError = endpointError != null
                 )
                 endpointError?.let { msg ->
@@ -349,7 +448,6 @@ fun SettingsScreen(commandManager: CommandManager, prefs: SharedPreferences) {
                         }
                     },
                     placeholder = { Text(stringResource(R.string.settings_model_placeholder)) },
-                    
                 )
             }
             Spacer(modifier = Modifier.height(8.dp))
@@ -397,7 +495,6 @@ fun SettingsScreen(commandManager: CommandManager, prefs: SharedPreferences) {
 
         Spacer(modifier = Modifier.height(8.dp))
 
-        // Card 2: Trigger Prefix
         SlateCard {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -418,16 +515,18 @@ fun SettingsScreen(commandManager: CommandManager, prefs: SharedPreferences) {
                         prefixError = when {
                             filtered.length != 1 -> prefixErrorLength
                             filtered[0].isWhitespace() -> prefixErrorWhitespace
-                            filtered[0].isLetterOrDigit() -> prefixErrorAlphanumeric
-                            else -> {
-                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                                commandManager.setTriggerPrefix(filtered)
-                                null
-                            }
+                            !filtered[0].isLetterOrDigit() && filtered != "#" && filtered != "@" && filtered != "!" -> prefixErrorAlphanumeric
+                            else -> null
+                        }
+                        if (prefixError == null) {
+                            commandManager.setTriggerPrefix(filtered)
+                            prefs.edit().putString("trigger_prefix", filtered).apply()
                         }
                     },
-                    isError = prefixError != null,
-                    modifier = Modifier.width(64.dp)
+                    placeholder = { Text(triggerPrefix) },
+                    singleLine = true,
+                    modifier = Modifier.width(60.dp),
+                    isError = prefixError != null
                 )
             }
             prefixError?.let { msg ->
@@ -442,107 +541,54 @@ fun SettingsScreen(commandManager: CommandManager, prefs: SharedPreferences) {
 
         Spacer(modifier = Modifier.height(8.dp))
 
-        // Card 3: Backup
         SlateCard {
-            Text(
-                text = stringResource(R.string.backup_desc),
-                fontSize = 13.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Spacer(modifier = Modifier.height(12.dp))
             Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { exportLauncher.launch("commands.json") }
+                    .padding(vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Button(
-                    onClick = {
-                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                        backupMessage = null
-                        exportLauncher.launch("swiftslate-commands.json")
-                    },
-                    shape = RoundedCornerShape(10.dp),
-                    modifier = Modifier.weight(1f).heightIn(min = 48.dp)
-                ) {
-                    Text(stringResource(R.string.backup_export))
-                }
-                Button(
-                    onClick = {
-                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                        backupMessage = null
-                        showImportConfirm = true
-                    },
-                    shape = RoundedCornerShape(10.dp),
-                    modifier = Modifier.weight(1f).heightIn(min = 48.dp)
-                ) {
-                    Text(stringResource(R.string.backup_import))
-                }
-            }
-            backupMessage?.let { msg ->
                 Text(
-                    text = msg,
-                    color = if (backupSuccess) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.error,
+                    text = stringResource(R.string.settings_backup_export),
                     fontSize = 13.sp,
-                    modifier = Modifier.padding(top = 8.dp)
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+            }
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { importLauncher.launch(arrayOf("application/json")) }
+                    .padding(vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = stringResource(R.string.settings_backup_import),
+                    fontSize = 13.sp,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+            }
+        }
+
+        if (backupMessage != null) {
+            Spacer(modifier = Modifier.height(8.dp))
+            SlateCard {
+                Text(
+                    text = backupMessage!!,
+                    fontSize = 13.sp,
+                    color = if (backupSuccess) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
                 )
             }
         }
 
         Spacer(modifier = Modifier.height(8.dp))
 
-        // Card 4: About
-        SlateCard(modifier = Modifier.weight(1f), fillHeight = true) {
+        SlateCard {
             Text(
-                text = stringResource(R.string.app_name) + " v" + BuildConfig.VERSION_NAME,
-                fontSize = 15.sp,
-                fontWeight = FontWeight.Medium,
-                color = MaterialTheme.colorScheme.onSurface
-            )
-            Spacer(modifier = Modifier.height(4.dp))
-            Text(
-                text = stringResource(R.string.settings_check_updates),
-                fontSize = 13.sp,
-                color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.clickable(interactionSource = null, indication = null) {
-                    uriHandler.openUri("https://github.com/Musheer360/SwiftSlate/releases/latest")
-                }
-            )
-            Spacer(modifier = Modifier.weight(1f))
-            SlateDivider()
-            Spacer(modifier = Modifier.weight(1f))
-            Text(
-                text = stringResource(R.string.settings_made_by),
+                text = stringResource(R.string.settings_version, BuildConfig.VERSION_NAME),
                 fontSize = 13.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
-            Spacer(modifier = Modifier.height(4.dp))
-            Text(
-                text = stringResource(R.string.settings_sponsor),
-                fontSize = 13.sp,
-                color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.clickable(interactionSource = null, indication = null) {
-                    uriHandler.openUri("https://github.com/sponsors/Musheer360")
-                }
-            )
         }
-    }
-
-    if (showImportConfirm) {
-        AlertDialog(
-            onDismissRequest = { showImportConfirm = false },
-            title = { Text(stringResource(R.string.backup_import)) },
-            text = { Text(stringResource(R.string.backup_import_confirm)) },
-            confirmButton = {
-                TextButton(onClick = {
-                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
-                    showImportConfirm = false
-                    importLauncher.launch(arrayOf("application/json"))
-                }) { Text(stringResource(R.string.backup_import)) }
-            },
-            dismissButton = {
-                TextButton(onClick = { showImportConfirm = false }) {
-                    Text(stringResource(R.string.backup_import_cancel))
-                }
-            }
-        )
     }
 }
