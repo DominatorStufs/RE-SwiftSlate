@@ -30,6 +30,8 @@ import com.musheer360.swiftslate.api.ApiException
 import com.musheer360.swiftslate.api.GeminiClient
 import com.musheer360.swiftslate.api.GenerateResult
 import com.musheer360.swiftslate.api.OpenAICompatibleClient
+import com.musheer360.swiftslate.api.CodexApiClient
+import com.musheer360.swiftslate.api.CopilotApiClient
 import com.musheer360.swiftslate.manager.CommandManager
 import com.musheer360.swiftslate.manager.KeyManager
 import com.musheer360.swiftslate.manager.StatsManager
@@ -59,6 +61,8 @@ class AssistantService : AccessibilityService() {
     private lateinit var statsManager: StatsManager
     private val client = GeminiClient()
     private val openAIClient = OpenAICompatibleClient()
+    private val codexApiClient = CodexApiClient()
+    private val copilotApiClient = CopilotApiClient()
     private val serviceJob = SupervisorJob()
     private val serviceScope = CoroutineScope(serviceJob + Dispatchers.IO)
     private val isProcessing = java.util.concurrent.atomic.AtomicBoolean(false)
@@ -315,26 +319,44 @@ class AssistantService : AccessibilityService() {
             val providerType = ProviderType.sanitize(prefs.getString("provider_type", null))
             val model: String
             val endpoint: String
+            val apiKey: String?
 
-            if (providerType == ProviderType.CUSTOM) {
-                model = prefs.getString("custom_model", "") ?: ""
-                endpoint = prefs.getString("custom_endpoint", "") ?: ""
-                if (model.isBlank() || endpoint.isBlank()) {
-                    showToast("Custom provider not configured. Set endpoint and model in Settings.")
-                    withContext(NonCancellable + Dispatchers.Main) {
-                        cancelWatchdog()
-                        processingStartedAt = 0L
-                        scheduleProcessingReset()
-                        recycleIfUnowned(source)
+            when (providerType) {
+                ProviderType.CUSTOM -> {
+                    model = prefs.getString("custom_model", "") ?: ""
+                    endpoint = prefs.getString("custom_endpoint", "") ?: ""
+                    apiKey = keyManager.getNextKey()
+                    if (model.isBlank() || endpoint.isBlank()) {
+                        showToast("Custom provider not configured. Set endpoint and model in Settings.")
+                        withContext(NonCancellable + Dispatchers.Main) {
+                            cancelWatchdog()
+                            processingStartedAt = 0L
+                            scheduleProcessingReset()
+                            recycleIfUnowned(source)
+                        }
+                        return@launch
                     }
-                    return@launch
                 }
-            } else if (providerType == ProviderType.GROQ) {
-                model = prefs.getString("groq_model", "llama-3.3-70b-versatile") ?: "llama-3.3-70b-versatile"
-                endpoint = "https://api.groq.com/openai/v1"
-            } else {
-                model = prefs.getString("model", "gemini-2.5-flash-lite") ?: "gemini-2.5-flash-lite"
-                endpoint = ""
+                ProviderType.GROQ -> {
+                    model = prefs.getString("groq_model", "llama-3.3-70b-versatile") ?: "llama-3.3-70b-versatile"
+                    endpoint = "https://api.groq.com/openai/v1"
+                    apiKey = keyManager.getNextKey()
+                }
+                ProviderType.CODEX_API -> {
+                    model = prefs.getString("codex_api_model", "gpt-5") ?: "gpt-5"
+                    endpoint = "https://chatbot.codexapi.workers.dev"
+                    apiKey = null
+                }
+                ProviderType.COPILOT -> {
+                    model = "copilot"
+                    endpoint = "https://copilot-api-delta.vercel.app"
+                    apiKey = null
+                }
+                else -> {
+                    model = prefs.getString("model", "gemini-2.5-flash-lite") ?: "gemini-2.5-flash-lite"
+                    endpoint = ""
+                    apiKey = keyManager.getNextKey()
+                }
             }
             val temperature = prefs.getFloat("temperature", DEFAULT_TEMPERATURE.toFloat()).toDouble()
             val useStructuredOutput = run {
@@ -346,25 +368,41 @@ class AssistantService : AccessibilityService() {
             var spinnerJob: Job? = null
             try {
                 withTimeout(90_000) {
-                    val maxAttempts = keyManager.getKeys().size.coerceAtLeast(1)
+                    val maxAttempts = if (providerType == ProviderType.CODEX_API || providerType == ProviderType.COPILOT) {
+                        1
+                    } else {
+                        keyManager.getKeys().size.coerceAtLeast(1)
+                    }
                     var lastErrorMsg: String? = null
                     var succeeded = false
 
                     for (attempt in 0 until maxAttempts) {
-                        val key = keyManager.getNextKey()
-                        if (key == null) break
+                        val currentKey = if (providerType == ProviderType.CODEX_API || providerType == ProviderType.COPILOT) {
+                            null
+                        } else {
+                            keyManager.getNextKey() ?: break
+                        }
 
                         if (spinnerJob == null) {
                             spinnerJob = startInlineSpinner(source, originalText)
                         }
 
                         val isGroq = providerType == ProviderType.GROQ
-                        val result = if (isGroq || providerType == ProviderType.CUSTOM) {
-                            openAIClient.generate(command.prompt, text, key, model, temperature, endpoint,
-                                useStructuredOutput = false,
-                                useJsonObjectMode = isGroq && useStructuredOutput)
-                        } else {
-                            client.generate(command.prompt, text, key, model, temperature, useStructuredOutput)
+                        val result = when (providerType) {
+                            ProviderType.CODEX_API -> {
+                                codexApiClient.generate(command.prompt, text, model, temperature)
+                            }
+                            ProviderType.COPILOT -> {
+                                copilotApiClient.generate(command.prompt, text, model, temperature)
+                            }
+                            ProviderType.GROQ, ProviderType.CUSTOM -> {
+                                openAIClient.generate(command.prompt, text, currentKey!!, model, temperature, endpoint,
+                                    useStructuredOutput = false,
+                                    useJsonObjectMode = isGroq && useStructuredOutput)
+                            }
+                            else -> {
+                                client.generate(command.prompt, text, currentKey!!, model, temperature, useStructuredOutput)
+                            }
                         }
 
                         if (result.isSuccess) {
@@ -390,10 +428,10 @@ class AssistantService : AccessibilityService() {
                         when (apiError) {
                             is ApiError.RateLimit -> {
                                 val seconds = apiError.retryAfterSeconds?.toLong() ?: 60
-                                keyManager.reportRateLimit(key, seconds)
+                                if (currentKey != null) keyManager.reportRateLimit(currentKey, seconds)
                             }
                             is ApiError.InvalidKey -> {
-                                keyManager.markInvalid(key)
+                                if (currentKey != null) keyManager.markInvalid(currentKey)
                             }
                             is ApiError.ServerError -> continue // 5xx — try next key
                             else -> break // Non-retryable error, stop trying other keys
@@ -408,14 +446,21 @@ class AssistantService : AccessibilityService() {
                         if (lastErrorMsg != null) {
                             showToast(mapErrorMessage(lastErrorMsg))
                         } else {
-                            val waitMs = keyManager.getShortestWaitTimeMs()
-                            if (waitMs != null) {
-                                val waitSec = ((waitMs + 999) / 1000).coerceAtLeast(1)
-                                showToast("API key rate limited. Try again in ${waitSec}s")
-                            } else if (keyManager.getKeys().isEmpty()) {
-                                showToast("No API keys configured")
-                            } else {
-                                showToast("All API keys are invalid. Please check your keys")
+                            when (providerType) {
+                                ProviderType.CODEX_API, ProviderType.COPILOT -> {
+                                    showToast("Free API Error. Check your internet connection.")
+                                }
+                                else -> {
+                                    val waitMs = keyManager.getShortestWaitTimeMs()
+                                    if (waitMs != null) {
+                                        val waitSec = ((waitMs + 999) / 1000).coerceAtLeast(1)
+                                        showToast("API key rate limited. Try again in ${waitSec}s")
+                                    } else if (keyManager.getKeys().isEmpty()) {
+                                        showToast("No API keys configured")
+                                    } else {
+                                        showToast("All API keys are invalid. Please check your keys")
+                                    }
+                                }
                             }
                         }
                     }
