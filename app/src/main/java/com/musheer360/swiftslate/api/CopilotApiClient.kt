@@ -48,7 +48,7 @@ class CopilotApiClient {
             connection = URL("$BASE_URL/v1/chat/completions").openConnection() as HttpURLConnection
             connection.requestMethod = "POST"
             connection.setRequestProperty("Content-Type", "application/json")
-            connection.setRequestProperty("Accept", "application/json")
+            connection.setRequestProperty("Accept", "text/event-stream, application/json, */*")
             connection.setRequestProperty("User-Agent", BROWSER_USER_AGENT)
             connection.doOutput = true
             connection.connectTimeout = 30_000
@@ -67,7 +67,9 @@ class CopilotApiClient {
                     })
                 })
                 put("temperature", temperature)
-                put("stream", false)
+                // The public FastAPI docs/chat UI for this endpoint use streaming. Non-streaming
+                // calls currently return HTTP 500 from the upstream Microsoft Copilot websocket.
+                put("stream", true)
             }
 
             connection.outputStream.use { os ->
@@ -77,26 +79,18 @@ class CopilotApiClient {
             val responseCode = connection.responseCode
             if (responseCode in 200..299) {
                 val response = ApiClientUtils.readResponseBounded(connection)
-                val jsonResponse = JSONObject(response)
-                val choices = jsonResponse.optJSONArray("choices")
-                if (choices != null && choices.length() > 0) {
-                    val choice = choices.getJSONObject(0)
-                    val finishReason = choice.optString("finish_reason", "")
-                    if (finishReason == "content_filter") {
-                        return Result.failure(Exception("Response blocked by content filter"))
-                    }
-                    val message = choice.optJSONObject("message")
-                    var resultText = message?.optString("content", "") ?: ""
-                    resultText = ApiClientUtils.stripReasoningBlock(resultText)
-                    resultText = ApiClientUtils.stripMarkdownFences(resultText)
+                val parsed = extractGeneratedText(response)
+                var resultText = parsed.first
+                val finishReason = parsed.second
+                resultText = ApiClientUtils.stripReasoningBlock(resultText)
+                resultText = ApiClientUtils.stripMarkdownFences(resultText)
 
-                    if (resultText.isBlank()) {
-                        Result.failure(Exception("Model returned empty response"))
-                    } else {
-                        Result.success(GenerateResult(resultText, truncated = finishReason == "length"))
-                    }
+                if (finishReason == "content_filter") {
+                    Result.failure(Exception("Response blocked by content filter"))
+                } else if (resultText.isBlank()) {
+                    Result.failure(Exception("Model returned empty response"))
                 } else {
-                    Result.failure(Exception("No choices found in response"))
+                    Result.success(GenerateResult(resultText, truncated = finishReason == "length"))
                 }
             } else if (responseCode == 429) {
                 val retryAfter = connection.getHeaderField("Retry-After")?.toIntOrNull()
@@ -131,4 +125,51 @@ class CopilotApiClient {
             connection?.disconnect()
         }
     }
+
+    private fun extractGeneratedText(response: String): Pair<String, String> {
+        val trimmed = response.trim()
+        if (trimmed.isBlank()) return "" to ""
+
+        if (trimmed.lineSequence().any { it.trimStart().startsWith("data:") }) {
+            val out = StringBuilder()
+            var finishReason = ""
+            for (rawLine in trimmed.lineSequence()) {
+                val line = rawLine.trim()
+                if (!line.startsWith("data:")) continue
+                val payload = line.removePrefix("data:").trim()
+                if (payload == "[DONE]") break
+                try {
+                    val chunk = JSONObject(payload)
+                    val choice = chunk.optJSONArray("choices")?.optJSONObject(0) ?: continue
+                    finishReason = choice.optString("finish_reason", finishReason)
+                    val delta = choice.optJSONObject("delta")
+                    val message = choice.optJSONObject("message")
+                    out.append(delta?.optString("content", "") ?: "")
+                    if (delta == null) out.append(message?.optString("content", "") ?: "")
+                } catch (_: Exception) {
+                    // Ignore malformed keep-alive/comment lines in SSE streams.
+                }
+            }
+            return out.toString() to finishReason
+        }
+
+        return try {
+            val jsonResponse = JSONObject(trimmed)
+            val choices = jsonResponse.optJSONArray("choices")
+            if (choices != null && choices.length() > 0) {
+                val choice = choices.getJSONObject(0)
+                val finishReason = choice.optString("finish_reason", "")
+                val message = choice.optJSONObject("message")
+                val delta = choice.optJSONObject("delta")
+                ((message?.optString("content", "") ?: delta?.optString("content", "") ?: "") to finishReason)
+            } else {
+                listOf("answer", "response", "content", "text")
+                    .firstNotNullOfOrNull { key -> jsonResponse.optString(key, "").takeIf { it.isNotBlank() } }
+                    .orEmpty() to ""
+            }
+        } catch (_: Exception) {
+            trimmed to ""
+        }
+    }
+
 }
