@@ -11,7 +11,7 @@
     <string name="dashboard_api_keys_title">API Keys</string>
     <string name="dashboard_keys_configured">%1$d keys configured</string>
     <string name="dashboard_add_key_hint">Add an API key to get started.</string>
-    <string name="dashboard_keyless_provider_hint">The selected provider does not require an API key.</string>
+    <string name="dashboard_keyless_provider_hint" translatable="false">The selected provider does not require an API key.</string>
     <string name="dashboard_monthly_requests">This Month</string>
     <string name="dashboard_favorite_command">Top Command</string>
     <string name="dashboard_no_data">—</string>
@@ -28,7 +28,7 @@
     <string name="keys_keystore_error">Secure key storage is unavailable on this device. Keys cannot be saved.</string>
     <string name="keys_custom_endpoint_required">Set the endpoint URL in Settings before adding a key for the Custom provider</string>
     <string name="keys_get_api_key">Get your %1$s API key ↗</string>
-    <string name="keys_keyless_provider_note">%1$s is free and does not require an API key. You can still keep saved keys for other providers.</string>
+    <string name="keys_keyless_provider_note" translatable="false">%1$s is free and does not require an API key. You can still keep saved keys for other providers.</string>
     <string name="keys_empty">No API keys added</string>
 
     <!-- Commands -->
@@ -55,8 +55,8 @@
     <string name="settings_provider_title">Model Provider</string>
     <string name="settings_provider_gemini">Google Gemini</string>
     <string name="settings_provider_groq">Groq</string>
-    <string name="settings_provider_codex_api">Codex API (Free)</string>
-    <string name="settings_provider_copilot">Copilot (Free, Unofficial)</string>
+    <string name="settings_provider_codex_api" translatable="false">Codex API (Free)</string>
+    <string name="settings_provider_copilot" translatable="false">Copilot (Free, Unofficial)</string>
     <string name="settings_provider_custom">Custom (OpenAI Compatible)</string>
     <string name="settings_model_title">Model</string>
     <string name="settings_temperature_title">Temperature</string>
@@ -69,7 +69,7 @@
     <string name="settings_prefix_error_alphanumeric">Cannot be a letter or digit</string>
     <string name="settings_endpoint_error_scheme">Must start with https://</string>
     <string name="settings_endpoint_error_spaces">URL cannot contain spaces</string>
-    <string name="settings_keyless_provider_note">No API key is required for this provider. Requests are sent to a community endpoint.</string>
+    <string name="settings_keyless_provider_note" translatable="false">No API key is required for this provider. Requests are sent to a community endpoint.</string>
 
     <!-- Backup -->
     <string name="backup_desc">Export or import your commands as a JSON file.</string>
