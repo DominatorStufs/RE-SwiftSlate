@@ -20,6 +20,7 @@
     <string name="keys_valid_added">Chave válida adicionada!</string>
     <string name="keys_already_added">Esta chave já foi adicionada</string>
     <string name="keys_validation_failed">Falha na validação</string>
+    <string name="keys_custom_endpoint_required">Configure a URL do endpoint em Configurações antes de adicionar uma chave para o provedor personalizado</string>
     <string name="keys_get_api_key">Obtenha sua chave API %1$s ↗</string>
 
     <!-- Commands -->
@@ -89,7 +90,62 @@
     <string name="settings_temperature_title">Temperatura</string>
     <string name="settings_made_by">Feito com amor por Musheer Alam</string>
     <string name="settings_sponsor">Patrocinar no GitHub</string>
-    <string name="settings_backup_export">Export Commands</string>
-    <string name="settings_backup_import">Import Commands</string>
-    <string name="settings_version">Version %1$s</string>
+
+    <!-- Toast & error messages -->
+    <string name="toast_replace_failed">Não foi possível substituir o texto</string>
+    <string name="toast_custom_not_configured">Provedor personalizado não configurado. Defina o endpoint e o modelo nas Configurações.</string>
+    <string name="toast_key_rate_limited">Limite de solicitações da chave API atingido. Tente novamente em %1$ds</string>
+    <string name="toast_no_keys">Nenhuma chave API configurada</string>
+    <string name="toast_all_keys_invalid">Todas as chaves API são inválidas. Verifique suas chaves</string>
+    <string name="toast_request_timed_out">A solicitação expirou</string>
+    <string name="process_text_title">Aplicar um comando</string>
+    <string name="process_text_replace">Substituir</string>
+    <string name="process_text_copy">Copiar</string>
+    <string name="process_text_back">Voltar</string>
+    <string name="process_text_retry">Tentar novamente</string>
+    <string name="process_text_copied">Copiado</string>
+    <string name="process_text_no_selection">Nenhum texto selecionado</string>
+    <string name="process_text_no_commands">Não há comandos disponíveis. Adicione um no SwiftSlate.</string>
+    <string name="toast_restore_failed">Não foi possível restaurar o texto original</string>
+    <string name="toast_nothing_to_undo">Nada para desfazer</string>
+    <string name="toast_undo_failed">Não foi possível desfazer</string>
+    <string name="toast_nothing_to_copy">Nada para copiar</string>
+    <string name="toast_copied">Copiado para a área de transferência</string>
+    <string name="toast_nothing_to_cut">Nada para recortar</string>
+    <string name="toast_cut">Recortado para a área de transferência</string>
+    <string name="toast_clipboard_empty">A área de transferência está vazia</string>
+    <string name="toast_clipboard_failed">A operação da área de transferência falhou</string>
+    <string name="error_no_model_access">Sua chave API não tem acesso a este modelo.</string>
+    <string name="error_invalid_key">Chave API inválida. Verifique sua chave nas Configurações.</string>
+    <string name="error_invalid_key_with_hint">Chave de API inválida (%1$s). Verifique suas chaves nas Configurações.</string>
+    <string name="error_rate_limited">Limite de solicitações atingido. Tente novamente em breve.</string>
+    <string name="error_model_not_found">Modelo não encontrado. Verifique a seleção do modelo nas Configurações.</string>
+    <string name="error_safety_blocked">Resposta bloqueada pelos filtros de segurança. Tente reformular.</string>
+    <string name="error_empty_response">O modelo retornou uma resposta vazia. Tente novamente.</string>
+    <string name="error_timeout_connection">A solicitação expirou. Verifique sua conexão.</string>
+    <string name="error_no_internet">Sem conexão com a internet.</string>
+    <string name="error_endpoint_unreachable">Não foi possível acessar a API. Verifique a URL do endpoint.</string>
+    <string name="error_bad_request">A solicitação falhou. Verifique suas configurações.</string>
+
+    <!-- Updates & command descriptions -->
+    <string name="update_channel_name">Atualizações do aplicativo</string>
+    <string name="update_channel_desc">Notifica quando uma nova versão do SwiftSlate está disponível</string>
+    <string name="update_available_title">Atualização do SwiftSlate disponível</string>
+    <string name="update_available_text">Toque para ver a versão mais recente</string>
+    <string name="error_input_too_long">O texto é longo demais para o limite de tokens por minuto deste modelo. Tente novamente com um texto mais curto.</string>
+    <string name="note_response_truncated">[Observação: a resposta pode estar cortada]</string>
+    <string name="error_provider_auth_required">O endpoint rejeitou a solicitação. Se for um servidor na nuvem, faça login no próprio servidor (ex.: „ollama signin“).</string>
+    <string name="keys_endpoint_needs_v1">O endpoint está acessível, mas a URL deve terminar com /v1 (ex.: http://host:11434/v1).</string>
+    <string name="settings_fetch_models">Obter modelos</string>
+    <string name="settings_fetch_models_loading">Obtendo…</string>
+    <string name="settings_fetch_models_success">%1$d modelos carregados</string>
+    <string name="settings_fetch_models_empty">Nenhum modelo encontrado. Você ainda pode inserir um modelo manualmente.</string>
+    <string name="settings_fetch_models_failed">Não foi possível obter os modelos. Verifique o endereço e a chave da API.</string>
+    <string name="settings_models_refresh">Atualizar</string>
+    <string name="settings_models_need_key">Adicione uma chave de API acima para carregar a lista de modelos.</string>
+    <string name="settings_models_load_failed">Não foi possível carregar os modelos. Verifique sua conexão e sua chave de API.</string>
+    <string name="settings_models_empty_provider">Nenhum modelo disponível para esta chave de API.</string>
+    <string name="dashboard_service_killed_title">O SwiftSlate foi interrompido</string>
+    <string name="dashboard_service_killed_message">O serviço em segundo plano parou inesperadamente. Reative-o nas configurações de acessibilidade para continuar usando comandos.</string>
+    <string name="dashboard_service_killed_dismiss">Dispensar</string>
 </resources>

@@ -1,34 +1,22 @@
 package com.musheer360.swiftslate.service
 
 import android.accessibilityservice.AccessibilityService
-import android.animation.AnimatorSet
-import android.animation.ObjectAnimator
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
-import android.graphics.Color
-import android.graphics.PixelFormat
-import android.graphics.drawable.GradientDrawable
 import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
-import android.view.Gravity
+import android.util.Log
 import android.view.HapticFeedbackConstants
-import android.view.View
-import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
-import android.view.animation.DecelerateInterpolator
-import android.widget.TextView
-import android.widget.Toast
-import com.musheer360.swiftslate.api.ApiError
-import com.musheer360.swiftslate.api.ApiException
 import com.musheer360.swiftslate.api.GeminiClient
-import com.musheer360.swiftslate.api.GenerateResult
 import com.musheer360.swiftslate.api.OpenAICompatibleClient
 import com.musheer360.swiftslate.api.CodexApiClient
 import com.musheer360.swiftslate.api.CopilotApiClient
@@ -37,8 +25,13 @@ import com.musheer360.swiftslate.manager.KeyManager
 import com.musheer360.swiftslate.manager.StatsManager
 import com.musheer360.swiftslate.model.Command
 import com.musheer360.swiftslate.model.CommandType
-import com.musheer360.swiftslate.model.ProviderType
+import com.musheer360.swiftslate.ui.processtext.ProcessTextEdit
+import com.musheer360.swiftslate.ui.processtext.ProcessTextReplacementBridge
+import com.musheer360.swiftslate.ui.processtext.resolveProcessTextEdit
+import com.musheer360.swiftslate.R
+import com.musheer360.swiftslate.SwiftSlateApp
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -64,10 +57,16 @@ class AssistantService : AccessibilityService() {
     private val codexApiClient = CodexApiClient()
     private val copilotApiClient = CopilotApiClient()
     private val serviceJob = SupervisorJob()
-    private val serviceScope = CoroutineScope(serviceJob + Dispatchers.IO)
+    // Any exception escaping a coroutine launched from the accessibility service would kill
+    // the whole process with no UI to crash into (the Settings toggle stays "on" regardless,
+    // so the Dashboard just shows the service as inactive). Log and swallow instead.
+    private val serviceScope = CoroutineScope(
+        serviceJob + Dispatchers.IO +
+            CoroutineExceptionHandler { _, e ->
+                Log.w(TAG, "uncaught exception in service scope", e)
+            }
+    )
     private val isProcessing = java.util.concurrent.atomic.AtomicBoolean(false)
-    @Volatile
-    private var processingStartedAt = 0L
     private val handler = Handler(Looper.getMainLooper())
     private var triggerLastChars = setOf<Char>()
     private var cachedPrefix = CommandManager.DEFAULT_PREFIX
@@ -88,41 +87,53 @@ class AssistantService : AccessibilityService() {
     @Volatile
     private var lastReplacedAt = 0L
     @Volatile
+    private var lastFocusFallbackAt = 0L
+    @Volatile
     private var lastReplacedSource: AccessibilityNodeInfo? = null
     private var verifyRunnable: Runnable? = null
+    /** (clipboard, originalClip, ourText) for a paste-fallback restore that has not run yet. */
+    private var pendingClipRestore: Triple<android.content.ClipboardManager, ClipData?, String>? = null
     private var lastTriggerRefresh = 0L
-    private var currentOverlayToast: View? = null
-    private var dismissRunnable: Runnable? = null
     private var watchdogRunnable: Runnable? = null
-    private var dismissAnimator: AnimatorSet? = null
-    private var enterAnimator: AnimatorSet? = null
+    private val overlayToast by lazy { OverlayToast(this@AssistantService, handler) }
 
-    private fun dp(value: Int): Int {
-        val density = resources.displayMetrics.density
-        return (value * density + 0.5f).toInt()
-    }
-
-    private fun sourceId(source: AccessibilityNodeInfo): String =
-        "${source.windowId}:${source.viewIdResourceName ?: source.hashCode()}"
+    /**
+     * Stable identity for the field an undo point belongs to.
+     *
+     * Uses [AccessibilityNodeInfo.hashCode], which the framework overrides to derive from the
+     * source node id (accessibility view id + virtual descendant id) and window id — so it is
+     * a per-node value, not an identity hash, and it is equal across the successive node
+     * instances the same field produces.
+     *
+     * This deliberately does NOT prefer viewIdResourceName, which it used to: that is the less
+     * precise of the two. Sibling fields built from one layout share a resource name, so a
+     * RecyclerView of identical rows or a multi-field form collapsed to a single id and undo
+     * could be applied to the wrong field — exactly the corruption the check exists to prevent.
+     */
+    private fun sourceId(source: AccessibilityNodeInfo): String = source.hashCode().toString()
 
     private companion object {
+        const val TAG = "SwiftSlateService"
         const val TRIGGER_REFRESH_INTERVAL_MS = 5_000L
-        const val DEFAULT_TEMPERATURE = 0.5
         const val PROCESSING_WATCHDOG_MS = 120_000L
+        const val FOCUS_FALLBACK_MIN_INTERVAL_MS = 300L
         val SPINNER_FRAMES = arrayOf("◐", "◓", "◑", "◒")
-        const val TOAST_BACKGROUND_COLOR = 0xE6323232.toInt()
-        const val TOAST_DURATION_MS = 3500L
-        const val TOAST_BOTTOM_MARGIN_DP = 64
-        const val TOAST_ANIM_DURATION_MS = 300L
-        const val TOAST_SLIDE_DISTANCE_DP = 40
     }
 
     override fun onServiceConnected() {
         super.onServiceConnected()
-        keyManager = KeyManager(applicationContext)
-        commandManager = CommandManager(applicationContext)
-        statsManager = StatsManager(applicationContext)
-        updateTriggers()
+        try {
+            keyManager = (applicationContext as SwiftSlateApp).keyManager
+            commandManager = CommandManager(applicationContext)
+            statsManager = StatsManager(applicationContext)
+            updateTriggers()
+        } catch (e: Exception) {
+            // This callback runs on the binder thread with no framework guard: an exception
+            // here propagates to AccessibilityManagerService, which drops the service into the
+            // "crashed services" limbo with the toggle still on. Log and degrade instead — the
+            // event path and command path already handle an uninitialized manager (#125).
+            Log.w(TAG, "onServiceConnected failed; service will stay inert until re-enabled", e)
+        }
     }
 
     private fun updateTriggers() {
@@ -139,7 +150,6 @@ class AssistantService : AccessibilityService() {
             if (isProcessing.get()) {
                 currentJob?.cancel()
                 isProcessing.set(false)
-                processingStartedAt = 0L
             }
         }
         watchdogRunnable = runnable
@@ -166,17 +176,49 @@ class AssistantService : AccessibilityService() {
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
+        try {
+            handleAccessibilityEvent(event)
+        } catch (e: Exception) {
+            // AccessibilityNodeInfo methods throw IllegalStateException when the underlying
+            // view is gone or the node was already recycled by the time we call into it — a
+            // real race in the Accessibility API, not something we can fully prevent by
+            // checking first. Nothing here ran inside a coroutine, so nothing catches this on
+            // its own: an accessibility service has no foreground UI to crash into, so an
+            // uncaught exception silently kills the whole service process. The Settings toggle
+            // stays "on" (that flag is independent of whether the process is alive), so the
+            // user sees the Dashboard go inactive with no error and no way to tell why. See
+            // #125 — swallow and drop the event instead of taking the service down with it.
+            Log.w(TAG, "dropping accessibility event", e)
+            try { event?.source?.safeRecycle() } catch (_: Exception) {}
+        }
+    }
+
+    private fun handleAccessibilityEvent(event: AccessibilityEvent?) {
         if (event?.eventType != AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED) return
         if (event.packageName?.toString() == packageName) return
         if (!::keyManager.isInitialized) return
 
-        if (isProcessing.get()) return
-        val source = event.source ?: return
+        // Some hosts (WeChat-style editors, WebView fields) emit text-changed events whose
+        // source node is null or already recycled. Fall back to the focused input node of the
+        // active window before giving up — see #125 / #131. The root lookup is a binder call on
+        // the main thread, so it is throttled: hosts that flood null-source events are rare, and
+        // skipping an occasional event is harmless for trigger detection.
+        val source = event.source ?: run {
+            val now = SystemClock.elapsedRealtime()
+            if (now - lastFocusFallbackAt < FOCUS_FALLBACK_MIN_INTERVAL_MS) return
+            lastFocusFallbackAt = now
+            findFocusedEditableSource()
+        } ?: return
         if (source.isPassword) {
             source.safeRecycle()
             return
         }
         val text = source.text?.toString() ?: run {
+            source.safeRecycle()
+            return
+        }
+        if (handlePendingProcessTextReplacement(event, source, text)) return
+        if (isProcessing.get()) {
             source.safeRecycle()
             return
         }
@@ -225,7 +267,6 @@ class AssistantService : AccessibilityService() {
                 source.safeRecycle()
                 return
             }
-            processingStartedAt = System.currentTimeMillis()
             startWatchdog()
             cancelPendingProcessingReset()
             currentJob?.cancel()
@@ -239,7 +280,6 @@ class AssistantService : AccessibilityService() {
                 source.safeRecycle()
                 return
             }
-            processingStartedAt = System.currentTimeMillis()
             startWatchdog()
             cancelPendingProcessingReset()
             currentJob?.cancel()
@@ -253,7 +293,6 @@ class AssistantService : AccessibilityService() {
                     source.safeRecycle()
                     return
                 }
-                processingStartedAt = System.currentTimeMillis()
                 startWatchdog()
                 cancelPendingProcessingReset()
                 currentJob?.cancel()
@@ -261,23 +300,29 @@ class AssistantService : AccessibilityService() {
                     val thisJob = coroutineContext[Job]
                     try {
                         withContext(Dispatchers.Main) {
-                            lastOriginalText = precedingText
-                            lastUndoSourceId = sourceId(source)
-                            replaceText(source, precedingText + command.prompt)
-                            performHapticFeedback(HapticFeedbackConstants.CONFIRM)
-                            statsManager.recordUsage(command.trigger)
+                            val replacerOk = replaceText(source, precedingText + command.prompt)
+                            if (!replacerOk) {
+                                // Don't record an undo point, a CONFIRM haptic or a usage stat
+                                // for a replacement the field silently refused.
+                                performHapticFeedback(HapticFeedbackConstants.REJECT)
+                                showToast(getString(R.string.toast_replace_failed))
+                            } else {
+                                lastOriginalText = precedingText
+                                lastUndoSourceId = sourceId(source)
+                                performHapticFeedback(HapticFeedbackConstants.CONFIRM)
+                                statsManager.recordUsage(command.trigger)
+                            }
                         }
                     } catch (e: CancellationException) {
                         throw e
                     } catch (e: Exception) {
                         withContext(Dispatchers.Main) {
-                            showToast("Could not replace text")
+                            showToast(getString(R.string.toast_replace_failed))
                         }
                     } finally {
                         withContext(NonCancellable + Dispatchers.Main) {
                             if (currentJob === thisJob) {
                                 cancelWatchdog()
-                                processingStartedAt = 0L
                                 scheduleProcessingReset()
                             }
                             recycleIfUnowned(source)
@@ -294,7 +339,6 @@ class AssistantService : AccessibilityService() {
                     source.safeRecycle()
                     return
                 }
-                processingStartedAt = System.currentTimeMillis()
                 startWatchdog()
                 cancelPendingProcessingReset()
                 currentJob?.cancel()
@@ -303,11 +347,138 @@ class AssistantService : AccessibilityService() {
         }
     }
 
+    /**
+     * Best-effort source for text-changed events that arrive without one: the focused input
+     * node of the active window. Returns null when unavailable; the caller treats the result
+     * exactly like a null event.source and recycles it like one. All node access is guarded —
+     * the root can be stale the moment we ask (#125).
+     *
+     * Two-stage: `findFocus(FOCUS_INPUT)` keeps precedence (it surfaces sources upstream
+     * accepts), and a bounded recursive search for an editable+focused node runs only when
+     * `findFocus` reports nothing — some hosts expose the input deeper in the tree than
+     * `findFocus` reaches.
+     *
+     * Ownership: when `findFocus` returns non-null, this method recycles `root` and returns the
+     * focused node. When `findFocus` returns null, ownership of `root` is transferred to
+     * [FocusedEditableFinder] which recycles every visited node except the match it returns
+     * (or all on miss). The outer catch's `safeRecycle` is a safety net for the rare case where
+     * an exception escapes before the finder takes ownership; double-recycle is benign
+     * (`safeRecycle` catches `IllegalStateException`, and on API 33+ `recycle()` is a no-op).
+     */
+    private fun findFocusedEditableSource(): AccessibilityNodeInfo? {
+        val root = try {
+            rootInActiveWindow
+        } catch (e: Exception) {
+            Log.w(TAG, "focused-node fallback: root unavailable", e)
+            null
+        } ?: return null
+        try {
+            val focused = root.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)
+            if (focused === root) return root
+            if (focused != null) {
+                root.safeRecycle()
+                return focused
+            }
+            // Second stage: findFocus found nothing, so walk the tree for an editable+focused
+            // node. The walk recycles every visited node except the match it returns.
+            val found = FocusedEditableFinder.find(AccessibilityFocusNode(root)) as? AccessibilityFocusNode
+            return found?.node
+        } catch (e: Exception) {
+            Log.w(TAG, "focused-node fallback failed", e)
+            root.safeRecycle()
+            return null
+        }
+    }
+
+    private fun handlePendingProcessTextReplacement(
+        event: AccessibilityEvent,
+        source: AccessibilityNodeInfo,
+        afterText: String
+    ): Boolean {
+        val request = ProcessTextReplacementBridge.current(SystemClock.elapsedRealtime())
+            ?: return false
+        // The request's package is optional, but an event without a package can never be
+        // verified against it — previously a pending request with a null sourcePackage was
+        // matched against (and consumed by) an edit in ANY app, or one with no package at all.
+        val eventPackage = event.packageName?.toString() ?: return false
+        if (request.sourcePackage != null && eventPackage != request.sourcePackage) {
+            return false
+        }
+        val beforeText = event.beforeText?.toString() ?: return false
+        val edit = resolveProcessTextEdit(
+            beforeText = beforeText,
+            afterText = afterText,
+            fromIndex = event.fromIndex,
+            removedCount = event.removedCount,
+            addedCount = event.addedCount,
+            request = request
+        )
+        if (edit == ProcessTextEdit.Unrelated) {
+            return false
+        }
+        if (edit is ProcessTextEdit.Appended && isProcessing.get()) {
+            // A command is already running. Leave the request pending and the field untouched
+            // instead of consuming the request and swallowing the user's keystroke — a later
+            // text-changed event inside the bridge TTL can still apply it (#125).
+            source.safeRecycle()
+            return false
+        }
+        if (!ProcessTextReplacementBridge.consume(request)) {
+            return false
+        }
+        if (edit == ProcessTextEdit.Replaced) {
+            source.safeRecycle()
+            return true
+        }
+
+        edit as ProcessTextEdit.Appended
+        if (!isProcessing.compareAndSet(false, true)) {
+            // Lost a race with a new command after the pre-check; the request is already
+            // consumed, so drop this edit rather than clobbering the command's field writes.
+            source.safeRecycle()
+            return true
+        }
+        startWatchdog()
+        cancelPendingProcessingReset()
+        currentJob = serviceScope.launch {
+            val thisJob = coroutineContext[Job]
+            try {
+                val replaced = replaceText(source, edit.correctedText)
+                if (replaced) {
+                    lastOriginalText = beforeText
+                    lastUndoSourceId = sourceId(source)
+                } else {
+                    withContext(Dispatchers.Main) {
+                        showToast(getString(R.string.toast_replace_failed))
+                    }
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                withContext(Dispatchers.Main) {
+                    showToast(getString(R.string.toast_replace_failed))
+                }
+            } finally {
+                withContext(NonCancellable + Dispatchers.Main) {
+                    if (currentJob === thisJob) {
+                        cancelWatchdog()
+                        scheduleProcessingReset()
+                    }
+                    recycleIfUnowned(source)
+                }
+            }
+        }
+        return true
+    }
+
     private fun processCommand(source: AccessibilityNodeInfo, text: String, command: Command) {
         if (!keyManager.keystoreAvailable) {
-            handler.post { Toast.makeText(applicationContext, "Secure key storage unavailable. Please reinstall the app.", Toast.LENGTH_LONG).show() }
+            // keys_keystore_error rather than toast_keystore_unavailable: the latter tells the
+            // user to reinstall, which destroys every key, command and setting, and does not
+            // address the usual cause (the KeyStore key being invalidated by a lock-screen
+            // change, where re-adding the keys is enough). Both strings are already localized.
+            handler.post { overlayToast.show(getString(R.string.keys_keystore_error)) }
             cancelWatchdog()
-            processingStartedAt = 0L
             isProcessing.set(false)
             recycleIfUnowned(source)
             return
@@ -315,177 +486,90 @@ class AssistantService : AccessibilityService() {
 
         currentJob = serviceScope.launch {
             val thisJob = coroutineContext[Job]
-            val prefs = applicationContext.getSharedPreferences("settings", Context.MODE_PRIVATE)
-            val providerType = ProviderType.sanitize(prefs.getString("provider_type", null))
-            val model: String
-            val endpoint: String
-            val apiKey: String?
-
-            when (providerType) {
-                ProviderType.CUSTOM -> {
-                    model = prefs.getString("custom_model", "") ?: ""
-                    endpoint = prefs.getString("custom_endpoint", "") ?: ""
-                    apiKey = keyManager.getNextKey()
-                    if (model.isBlank() || endpoint.isBlank()) {
-                        showToast("Custom provider not configured. Set endpoint and model in Settings.")
-                        withContext(NonCancellable + Dispatchers.Main) {
-                            cancelWatchdog()
-                            processingStartedAt = 0L
-                            scheduleProcessingReset()
-                            recycleIfUnowned(source)
-                        }
-                        return@launch
-                    }
-                }
-                ProviderType.GROQ -> {
-                    model = prefs.getString("groq_model", "llama-3.3-70b-versatile") ?: "llama-3.3-70b-versatile"
-                    endpoint = "https://api.groq.com/openai/v1"
-                    apiKey = keyManager.getNextKey()
-                }
-                ProviderType.CODEX_API -> {
-                    model = prefs.getString("codex_api_model", "gpt-5") ?: "gpt-5"
-                    endpoint = "https://chatbot.codexapi.workers.dev"
-                    apiKey = null
-                }
-                ProviderType.COPILOT -> {
-                    model = "copilot"
-                    endpoint = "https://copilot-api-delta.vercel.app"
-                    apiKey = null
-                }
-                else -> {
-                    model = prefs.getString("model", "gemini-2.5-flash-lite") ?: "gemini-2.5-flash-lite"
-                    endpoint = ""
-                    apiKey = keyManager.getNextKey()
-                }
-            }
-            val temperature = prefs.getFloat("temperature", DEFAULT_TEMPERATURE.toFloat()).toDouble()
-            val useStructuredOutput = run {
-                val disabledAt = prefs.getLong("structured_output_disabled_at", 0L)
-                System.currentTimeMillis() - disabledAt > 86_400_000L // re-try after 24h
-            }
-
             val originalText = text
             var spinnerJob: Job? = null
             try {
-                withTimeout(90_000) {
-                    val maxAttempts = if (providerType == ProviderType.CODEX_API || providerType == ProviderType.COPILOT) {
-                        1
-                    } else {
-                        keyManager.getKeys().size.coerceAtLeast(1)
-                    }
-                    var lastErrorMsg: String? = null
-                    var succeeded = false
+                val outcome = withTimeout(90_000) {
+                    runTextCommand(
+                        applicationContext, keyManager, client, openAIClient,
+                        command.prompt, text
+                    ) { spinnerJob = startInlineSpinner(source, originalText) }
+                }
+                // From the first attempt onward the field holds the spinner glyph instead of the
+                // user's text, so every outcome below starts by taking it back out. No spinner
+                // means no usable key was ever found and the field was never touched — a failed
+                // no-op write must not produce a "could not restore your text" prefix.
+                val fieldWasAltered = spinnerJob != null
+                spinnerJob?.cancelAndJoin()
+                spinnerJob = null
 
-                    for (attempt in 0 until maxAttempts) {
-                        val currentKey = if (providerType == ProviderType.CODEX_API || providerType == ProviderType.COPILOT) {
-                            null
+                when (outcome) {
+                    is CommandOutcome.Success -> {
+                        if (!replaceText(source, outcome.text)) {
+                            // The field rejected the write. Restore the user's text, and don't
+                            // record an undo point or a CONFIRM haptic for text that never landed.
+                            replaceText(source, originalText)
+                            performHapticFeedback(HapticFeedbackConstants.REJECT)
+                            showToast(getString(R.string.toast_replace_failed))
                         } else {
-                            keyManager.getNextKey() ?: break
-                        }
-
-                        if (spinnerJob == null) {
-                            spinnerJob = startInlineSpinner(source, originalText)
-                        }
-
-                        val isGroq = providerType == ProviderType.GROQ
-                        val result = when (providerType) {
-                            ProviderType.CODEX_API -> {
-                                codexApiClient.generate(command.prompt, text, model, temperature)
-                            }
-                            ProviderType.COPILOT -> {
-                                copilotApiClient.generate(command.prompt, text, model, temperature)
-                            }
-                            ProviderType.GROQ, ProviderType.CUSTOM -> {
-                                openAIClient.generate(command.prompt, text, currentKey!!, model, temperature, endpoint,
-                                    useStructuredOutput = false,
-                                    useJsonObjectMode = isGroq && useStructuredOutput)
-                            }
-                            else -> {
-                                client.generate(command.prompt, text, currentKey!!, model, temperature, useStructuredOutput)
-                            }
-                        }
-
-                        if (result.isSuccess) {
-                            spinnerJob.cancelAndJoin()
-                            spinnerJob = null
                             lastOriginalText = originalText
                             lastUndoSourceId = sourceId(source)
-                            val generateResult = result.getOrThrow()
-                            replaceText(source, generateResult.text)
                             performHapticFeedback(HapticFeedbackConstants.CONFIRM)
-                            if (generateResult.structuredOutputFailed) {
-                                prefs.edit().putLong("structured_output_disabled_at", System.currentTimeMillis()).apply()
-                            }
-                            succeeded = true
                             statsManager.recordUsage(command.trigger)
-                            break
-                        }
-
-                        val msg = result.exceptionOrNull()?.message ?: ""
-                        lastErrorMsg = msg
-                        val apiError = (result.exceptionOrNull() as? ApiException)?.apiError
-
-                        when (apiError) {
-                            is ApiError.RateLimit -> {
-                                val seconds = apiError.retryAfterSeconds?.toLong() ?: 60
-                                if (currentKey != null) keyManager.reportRateLimit(currentKey, seconds)
-                            }
-                            is ApiError.InvalidKey -> {
-                                if (currentKey != null) keyManager.markInvalid(currentKey)
-                            }
-                            is ApiError.ServerError -> continue // 5xx — try next key
-                            else -> break // Non-retryable error, stop trying other keys
                         }
                     }
-
-                    if (!succeeded) {
-                        spinnerJob?.cancelAndJoin()
-                        spinnerJob = null
+                    is CommandOutcome.Refusal -> {
                         replaceText(source, originalText)
                         performHapticFeedback(HapticFeedbackConstants.REJECT)
-                        if (lastErrorMsg != null) {
-                            showToast(mapErrorMessage(lastErrorMsg))
-                        } else {
-                            when (providerType) {
-                                ProviderType.CODEX_API, ProviderType.COPILOT -> {
-                                    showToast("Free API Error. Check your internet connection.")
-                                }
-                                else -> {
-                                    val waitMs = keyManager.getShortestWaitTimeMs()
-                                    if (waitMs != null) {
-                                        val waitSec = ((waitMs + 999) / 1000).coerceAtLeast(1)
-                                        showToast("API key rate limited. Try again in ${waitSec}s")
-                                    } else if (keyManager.getKeys().isEmpty()) {
-                                        showToast("No API keys configured")
-                                    } else {
-                                        showToast("All API keys are invalid. Please check your keys")
-                                    }
-                                }
-                            }
-                        }
+                        showToast(getString(R.string.error_safety_blocked))
+                    }
+                    // Nothing was sent, so there is nothing to restore.
+                    is CommandOutcome.Unavailable -> showToast(outcome.message)
+                    is CommandOutcome.Failure -> {
+                        val restoredOk = !fieldWasAltered || replaceText(source, originalText)
+                        performHapticFeedback(HapticFeedbackConstants.REJECT)
+                        showToast(
+                            if (restoredOk) outcome.message
+                            else getString(R.string.toast_restore_failed) + "\n" + outcome.message
+                        )
                     }
                 }
             } catch (e: TimeoutCancellationException) {
                 spinnerJob?.cancelAndJoin()
-                try { replaceText(source, originalText) } catch (_: Exception) {}
-                showToast("Request timed out")
+                // If the restore fails the field is left holding the spinner glyph, which
+                // matters more to the user than the timeout itself — say so rather than
+                // swallowing it (both strings already exist in every locale).
+                var restoreFailed = false
+                try { restoreFailed = !replaceText(source, originalText) } catch (_: Exception) { restoreFailed = true }
+                showToast(
+                    if (restoreFailed) getString(R.string.toast_restore_failed) + "\n" + getString(R.string.toast_request_timed_out)
+                    else getString(R.string.toast_request_timed_out)
+                )
             } catch (e: CancellationException) {
                 withContext(NonCancellable + Dispatchers.Main) {
                     spinnerJob?.cancel()
-                    try { replaceText(source, originalText) } catch (_: Exception) {}
+                    // Only restore if this job still owns the field. The watchdog clears
+                    // isProcessing as soon as it cancels, so a new command can start while this
+                    // handler is still running under NonCancellable — and restoring the old text
+                    // then would overwrite what the newer job has already written.
+                    if (currentJob === thisJob) {
+                        try { replaceText(source, originalText) } catch (_: Exception) {}
+                    }
                 }
                 throw e
             } catch (e: Exception) {
                 spinnerJob?.cancelAndJoin()
-                try { replaceText(source, originalText) } catch (_: Exception) {
-                    showToast("Could not restore original text")
-                }
-                showToast(mapErrorMessage(e.message ?: "Unknown error"))
+                // showToast() dismisses any visible toast first, so the previous code's
+                // restore-failure toast was destroyed microseconds later by the error toast
+                // below — making it unreadable. Combine them instead.
+                var restoreFailed = false
+                try { restoreFailed = !replaceText(source, originalText) } catch (_: Exception) { restoreFailed = true }
+                val mapped = mapErrorMessage(e.message ?: "Unknown error")
+                showToast(if (restoreFailed) getString(R.string.toast_restore_failed) + "\n" + mapped else mapped)
             } finally {
                 withContext(NonCancellable + Dispatchers.Main) {
                     if (currentJob === thisJob) {
                         cancelWatchdog()
-                        processingStartedAt = 0L
                         scheduleProcessingReset()
                     }
                     spinnerJob?.cancel()
@@ -503,21 +587,24 @@ class AssistantService : AccessibilityService() {
                 val undoId = lastUndoSourceId
                 if (previousText == null || undoId != sourceId(source)) {
                     performHapticFeedback(HapticFeedbackConstants.REJECT)
-                    showToast("Nothing to undo")
-                } else {
+                    showToast(getString(R.string.toast_nothing_to_undo))
+                } else if (replaceText(source, previousText)) {
+                    // Commit the new undo point only after the write succeeded. Doing it first
+                    // meant a silently-failed replace destroyed the saved original text.
                     lastOriginalText = currentText
-                    replaceText(source, previousText)
                     performHapticFeedback(HapticFeedbackConstants.CONFIRM)
+                } else {
+                    performHapticFeedback(HapticFeedbackConstants.REJECT)
+                    showToast(getString(R.string.toast_undo_failed))
                 }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                showToast("Could not undo")
+                showToast(getString(R.string.toast_undo_failed))
             } finally {
                 withContext(NonCancellable + Dispatchers.Main) {
                     if (currentJob === thisJob) {
                         cancelWatchdog()
-                        processingStartedAt = 0L
                         scheduleProcessingReset()
                     }
                     recycleIfUnowned(source)
@@ -528,7 +615,6 @@ class AssistantService : AccessibilityService() {
 
     private fun handleClipboardCommand(source: AccessibilityNodeInfo, precedingText: String, command: Command) {
         val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-        val clipText = clipboard.primaryClip?.getItemAt(0)?.coerceToText(this)?.toString()
         currentJob = serviceScope.launch {
             val thisJob = coroutineContext[Job]
             try {
@@ -538,76 +624,66 @@ class AssistantService : AccessibilityService() {
                         val textToCopy = precedingText.trim()
                         if (textToCopy.isEmpty()) {
                             performHapticFeedback(HapticFeedbackConstants.REJECT)
-                            showToast("Nothing to copy")
+                            showToast(getString(R.string.toast_nothing_to_copy))
                         } else {
-                            lastCopiedText = textToCopy
-                            withContext(Dispatchers.Main) {
-                                clipboard.setPrimaryClip(ClipData.newPlainText("SwiftSlate", textToCopy))
-                                replaceText(source, precedingText)
+                            // The success decision must be made OUTSIDE the inner withContext:
+                            // return@withContext exits only that lambda, so the success toast
+                            // still fired — and since showToast dismisses the previous toast, it
+                            // hid the failure message entirely.
+                            val wrote = withContext(Dispatchers.Main) {
+                                replaceText(source, precedingText, callerOwnsClipboard = true)
                             }
-                            performHapticFeedback(HapticFeedbackConstants.CONFIRM)
-                            showToast("Copied to clipboard")
-                            statsManager.recordUsage(command.trigger)
+                            if (wrote) {
+                                lastCopiedText = textToCopy
+                                withContext(Dispatchers.Main) {
+                                    clipboard.setPrimaryClip(ClipData.newPlainText("SwiftSlate", textToCopy))
+                                }
+                                performHapticFeedback(HapticFeedbackConstants.CONFIRM)
+                                showToast(getString(R.string.toast_copied))
+                                statsManager.recordUsage(command.trigger)
+                            } else {
+                                performHapticFeedback(HapticFeedbackConstants.REJECT)
+                                showToast(getString(R.string.toast_replace_failed))
+                            }
                         }
                     }
                     trigger.endsWith("cut") -> {
                         val textToCut = precedingText.trim()
                         if (textToCut.isEmpty()) {
                             performHapticFeedback(HapticFeedbackConstants.REJECT)
-                            showToast("Nothing to cut")
+                            showToast(getString(R.string.toast_nothing_to_cut))
                         } else {
-                            lastCopiedText = textToCut
-                            lastOriginalText = precedingText
-                            lastUndoSourceId = sourceId(source)
-                            withContext(Dispatchers.Main) {
-                                clipboard.setPrimaryClip(ClipData.newPlainText("SwiftSlate", textToCut))
-                                replaceText(source, "")
+                            val wrote = withContext(Dispatchers.Main) {
+                                replaceText(source, "", callerOwnsClipboard = true)
                             }
-                            performHapticFeedback(HapticFeedbackConstants.CONFIRM)
-                            showToast("Cut to clipboard")
-                            statsManager.recordUsage(command.trigger)
+                            if (wrote) {
+                                lastCopiedText = textToCut
+                                lastOriginalText = precedingText
+                                lastUndoSourceId = sourceId(source)
+                                withContext(Dispatchers.Main) {
+                                    clipboard.setPrimaryClip(ClipData.newPlainText("SwiftSlate", textToCut))
+                                }
+                                performHapticFeedback(HapticFeedbackConstants.CONFIRM)
+                                showToast(getString(R.string.toast_cut))
+                                statsManager.recordUsage(command.trigger)
+                            } else {
+                                // Never claim "Cut to clipboard" while the text is still there.
+                                performHapticFeedback(HapticFeedbackConstants.REJECT)
+                                showToast(getString(R.string.toast_replace_failed))
+                            }
                         }
                     }
-                    trigger.endsWith("paste") -> {
-                        val pasteText = lastCopiedText ?: clipText
-                        if (pasteText.isNullOrEmpty()) {
-                            performHapticFeedback(HapticFeedbackConstants.REJECT)
-                            showToast("Clipboard is empty")
-                        } else {
-                            lastOriginalText = precedingText
-                            lastUndoSourceId = sourceId(source)
-                            withContext(Dispatchers.Main) {
-                                replaceText(source, precedingText + pasteText)
-                            }
-                            performHapticFeedback(HapticFeedbackConstants.CONFIRM)
-                            statsManager.recordUsage(command.trigger)
-                        }
-                    }
-                    trigger.endsWith("replace") -> {
-                        val pasteText = lastCopiedText ?: clipText
-                        if (pasteText.isNullOrEmpty()) {
-                            performHapticFeedback(HapticFeedbackConstants.REJECT)
-                            showToast("Clipboard is empty")
-                        } else {
-                            lastOriginalText = precedingText
-                            lastUndoSourceId = sourceId(source)
-                            withContext(Dispatchers.Main) {
-                                replaceText(source, pasteText)
-                            }
-                            performHapticFeedback(HapticFeedbackConstants.CONFIRM)
-                            statsManager.recordUsage(command.trigger)
-                        }
-                    }
+                    trigger.endsWith("paste") -> handlePasteInto(source, precedingText, keepPrefix = precedingText, command = command)
+                    trigger.endsWith("replace") -> handlePasteInto(source, precedingText, keepPrefix = "", command = command)
                 }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                showToast("Clipboard operation failed")
+                showToast(getString(R.string.toast_clipboard_failed))
             } finally {
                 withContext(NonCancellable + Dispatchers.Main) {
                     if (currentJob === thisJob) {
                         cancelWatchdog()
-                        processingStartedAt = 0L
                         scheduleProcessingReset()
                     }
                     recycleIfUnowned(source)
@@ -616,8 +692,118 @@ class AssistantService : AccessibilityService() {
         }
     }
 
-    private suspend fun replaceText(source: AccessibilityNodeInfo, newText: String) = withContext(Dispatchers.Main) {
-        if (!source.refresh()) return@withContext
+    /**
+     * Handles `?paste` and `?replace`.
+     *
+     * [keepPrefix] is the text to keep in front of the pasted content: the text preceding
+     * the trigger for `?paste`, empty for `?replace`.
+     *
+     * Prefers [pasteFromSystemClipboard], which drives the target app's own paste action so
+     * the *real* system clipboard is used. The previous implementation read the clipboard
+     * itself and fell back to [lastCopiedText], which could never work for text copied in
+     * another app: an accessibility service is not the focused window and not the default
+     * IME, and framework ClipboardService gates OP_READ_CLIPBOARD on exactly that — so
+     * `primaryClip` was always null and `?paste` reported "Clipboard is empty" for anything
+     * SwiftSlate had not copied itself. Writing is not gated, which is why `?copy` works and
+     * why the fallback below can still stage text on the clipboard.
+     */
+    private suspend fun handlePasteInto(
+        source: AccessibilityNodeInfo,
+        precedingText: String,
+        keepPrefix: String,
+        command: Command
+    ) {
+        val pasted = pasteFromSystemClipboard(source, keepPrefix)
+        if (pasted != null) {
+            lastOriginalText = precedingText
+            lastUndoSourceId = sourceId(source)
+            performHapticFeedback(HapticFeedbackConstants.CONFIRM)
+            statsManager.recordUsage(command.trigger)
+            return
+        }
+
+        // Either the clipboard is empty or the field ignored ACTION_SET_TEXT / ACTION_PASTE.
+        // Fall back to the only clipboard content this service is allowed to know about: what
+        // it last copied itself.
+        val fallback = lastCopiedText
+        if (fallback.isNullOrEmpty()) {
+            performHapticFeedback(HapticFeedbackConstants.REJECT)
+            showToast(getString(R.string.toast_clipboard_empty))
+            return
+        }
+        if (replaceText(source, keepPrefix + fallback)) {
+            lastOriginalText = precedingText
+            lastUndoSourceId = sourceId(source)
+            performHapticFeedback(HapticFeedbackConstants.CONFIRM)
+            statsManager.recordUsage(command.trigger)
+        } else {
+            performHapticFeedback(HapticFeedbackConstants.REJECT)
+            showToast(getString(R.string.toast_replace_failed))
+        }
+    }
+
+    /**
+     * Strips the trigger, puts the caret after [keepPrefix], and asks the target app to paste.
+     * The app performs the read under its own window focus, so this honours text copied
+     * anywhere on the device without SwiftSlate ever reading the clipboard.
+     *
+     * Returns the resulting field text, or null when the field does not offer a paste action,
+     * the app refused a step, or the paste landed somewhere unexpected. The field is left
+     * untouched in the first case and holding [keepPrefix] in the others, both of which the
+     * caller's fallback can recover from.
+     */
+    private suspend fun pasteFromSystemClipboard(
+        source: AccessibilityNodeInfo,
+        keepPrefix: String
+    ): String? = withContext(Dispatchers.Main) {
+        if (!source.refresh()) return@withContext null
+        // Check before touching anything: TextView only advertises ACTION_PASTE when the field is
+        // editable, has a selection, AND hasPrimaryClip() is true. Without this guard an empty
+        // clipboard still got the trigger stripped by the setFieldText below, so the command
+        // silently ate the user's "?paste" and then reported the clipboard was empty.
+        val pasteSupported = source.actionList.any {
+            it.id == AccessibilityNodeInfo.ACTION_PASTE
+        }
+        if (!pasteSupported) return@withContext null
+        if (!setFieldText(source, keepPrefix)) return@withContext null
+        delay(50)
+        if (!source.refresh()) return@withContext null
+        // Bail out if the field silently rejected the write, otherwise the paste would land
+        // on top of the still-present trigger text.
+        if (source.text?.toString() != keepPrefix) return@withContext null
+
+        val caret = Bundle().apply {
+            putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_START_INT, keepPrefix.length)
+            putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_END_INT, keepPrefix.length)
+        }
+        source.performAction(AccessibilityNodeInfo.ACTION_SET_SELECTION, caret)
+        if (!source.performAction(AccessibilityNodeInfo.ACTION_PASTE)) return@withContext null
+
+        delay(100)
+        if (!source.refresh()) return@withContext null
+        val after = source.text?.toString() ?: return@withContext null
+        // Nothing added => empty clipboard or an ignored paste. Not starting with keepPrefix
+        // => the app ignored ACTION_SET_SELECTION and pasted somewhere else; treat both as a
+        // failure so the caller's fallback can put the field into a known state.
+        if (after == keepPrefix || !after.startsWith(keepPrefix)) return@withContext null
+        scheduleTextVerification(source, after)
+        after
+    }
+
+    /**
+     * Writes [newText] into [source]. Returns false when the field could not be updated.
+     * It previously returned Unit and signalled failure by returning early, which made every
+     * failure invisible: handleUndo had already overwritten its saved original text, and the
+     * restore paths could not tell a real restore from a silent no-op.
+     */
+    private suspend fun replaceText(
+        source: AccessibilityNodeInfo,
+        newText: String,
+        // When the caller owns the clipboard after this call (?copy / ?cut), the paste fallback
+        // must not restore or clear it — that destroyed the very clip the command just placed.
+        callerOwnsClipboard: Boolean = false
+    ): Boolean = withContext(Dispatchers.Main) {
+        if (!source.refresh()) return@withContext false
         val bundle = Bundle()
         bundle.putCharSequence(AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE, newText)
 
@@ -627,11 +813,26 @@ class AssistantService : AccessibilityService() {
             // Verify the text actually persisted — some apps (Firefox, Google Keep)
             // return true but don't update their internal text state
             delay(100)
-            source.refresh()
+            if (!source.refresh()) {
+                // The node was recycled during the verification delay. Reading .text now
+                // would throw IllegalStateException; report the write as unverified and let
+                // the caller's failure path handle it instead of failing the replacement.
+                return@withContext false
+            }
             val currentText = source.text?.toString()
             if (currentText == newText) {
                 scheduleTextVerification(source, newText)
-                return@withContext // Text persisted
+                return@withContext true // Text persisted
+            }
+            // Some editors (WebView-based, Samsung Notes, Keep) accept ACTION_SET_TEXT but
+            // commit asynchronously — give them one longer window before declaring the write
+            // ignored, so note-apps don't get a spurious clipboard fallback (#125).
+            delay(400)
+            if (!source.refresh()) return@withContext false
+            val settledText = source.text?.toString()
+            if (settledText == newText) {
+                scheduleTextVerification(source, newText)
+                return@withContext true // Text persisted late
             }
             // Text didn't persist, fall through to clipboard fallback
         }
@@ -647,33 +848,68 @@ class AssistantService : AccessibilityService() {
         }
         clipboard.setPrimaryClip(newClip)
 
-        source.refresh()
-        if (source.text == null) return@withContext
+        if (!source.refresh() || source.text == null) {
+            // We already replaced the clipboard above; bail out without leaving our temp clip
+            // (which holds the transformed text) as the user's clipboard.
+            if (!callerOwnsClipboard) restoreClipboard(clipboard, oldClip, newText)
+            return@withContext false
+        }
         val selectAllArgs = Bundle()
         selectAllArgs.putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_START_INT, 0)
         selectAllArgs.putInt(AccessibilityNodeInfo.ACTION_ARGUMENT_SELECTION_END_INT, source.text?.length ?: 0)
         source.performAction(AccessibilityNodeInfo.ACTION_SET_SELECTION, selectAllArgs)
 
-        source.performAction(AccessibilityNodeInfo.ACTION_PASTE)
+        val pasted = source.performAction(AccessibilityNodeInfo.ACTION_PASTE)
 
         scheduleTextVerification(source, newText)
 
-        handler.postDelayed({
-            try {
-                source.refresh()
-                val fieldText = source.text?.toString()
-                if (fieldText == newText) {
-                    val current = clipboard.primaryClip?.getItemAt(0)?.text?.toString()
-                    if (current == newText) {
-                        if (oldClip != null) {
-                            clipboard.setPrimaryClip(oldClip)
-                        } else {
-                            clipboard.setPrimaryClip(ClipData.newPlainText("", ""))
-                        }
+        if (!callerOwnsClipboard) {
+            // Deliberately does NOT touch `source`: scheduleTextVerification recycles the node
+            // at +300ms, so source.refresh() here threw IllegalStateException on API < 33.
+            // pendingClipRestore lets onInterrupt/onDestroy run this synchronously — both flush
+            // the handler, which previously cancelled it and left SwiftSlate's temp clip (the
+            // transformed text) as the user's clipboard indefinitely.
+            val currentPending = Triple(clipboard, oldClip, newText)
+            pendingClipRestore = currentPending
+            handler.postDelayed({
+                try {
+                    restoreClipboard(clipboard, oldClip, newText)
+                } catch (_: Exception) {
+                } finally {
+                    if (pendingClipRestore === currentPending) {
+                        pendingClipRestore = null
                     }
                 }
-            } catch (_: Exception) {}
-        }, 500)
+            }, 500)
+        }
+        // Report what the paste action actually returned. Returning an unconditional true here
+        // silently defeated every caller's failure check.
+        pasted
+    }
+
+    /**
+     * Puts the user's clipboard back after the paste fallback in [replaceText].
+     *
+     * [oldClip] is null whenever the read was denied, which is the normal case: framework
+     * ClipboardService gates OP_READ_CLIPBOARD on window focus / default-IME status, and an
+     * accessibility service is neither. So this cannot verify what is currently on the
+     * clipboard, and it cannot restore what was there before.
+     *
+     * Leaving SwiftSlate's temp clip in place is not an option — it holds the user's
+     * transformed text and would be handed to every later paste, and IS_SENSITIVE only
+     * applies from API 33. Previously the fallback therefore cleared the clipboard outright,
+     * which destroyed whatever the user had copied on every replacement in an app that
+     * ignores ACTION_SET_TEXT (Firefox, Google Keep). Restoring [lastCopiedText] instead
+     * recovers the most recent clip this service actually knows about, and only falls back
+     * to clearing when there is none.
+     */
+    private fun restoreClipboard(clipboard: ClipboardManager, oldClip: ClipData?, ourText: String) {
+        try {
+            val current = clipboard.primaryClip?.getItemAt(0)?.text?.toString()
+            if (current != null && current != ourText) return // user copied something newer
+            val recovered = oldClip ?: lastCopiedText?.let { ClipData.newPlainText("SwiftSlate", it) }
+            clipboard.setPrimaryClip(recovered ?: ClipData.newPlainText("", ""))
+        } catch (_: Exception) {}
     }
 
     @Suppress("DEPRECATION")
@@ -739,145 +975,39 @@ class AssistantService : AccessibilityService() {
     private fun startInlineSpinner(source: AccessibilityNodeInfo, baseText: String): Job {
         return serviceScope.launch(Dispatchers.Main) {
             var frameIndex = 0
-            while (isActive) {
-                if (!setFieldText(source, "$baseText ${SPINNER_FRAMES[frameIndex]}")) break
-                frameIndex = (frameIndex + 1) % SPINNER_FRAMES.size
-                delay(200)
+            try {
+                while (isActive) {
+                    if (!setFieldText(source, "$baseText ${SPINNER_FRAMES[frameIndex]}")) break
+                    frameIndex = (frameIndex + 1) % SPINNER_FRAMES.size
+                    delay(200)
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // The node was recycled or the view went away mid-request; stop the spinner
+                // instead of letting an unhandled exception kill the service. The AI result
+                // path still restores the original text. See #125.
+                Log.w(TAG, "spinner node went stale; stopping spinner", e)
             }
         }
     }
 
-    private fun mapErrorMessage(raw: String): String {
-        val lower = raw.lowercase()
-        return when {
-            lower.contains("permission_denied") || lower.contains("permission denied") ->
-                "Your API key doesn't have access to this model."
-            lower.contains("invalid api key") || lower.contains("api key not valid") || lower.contains("api_key_invalid") ->
-                "Invalid API key. Please check your key in Settings."
-            lower.contains("rate limit") || lower.contains("resource_exhausted") || lower.contains("quota") ->
-                "Rate limited. Try again shortly."
-            lower.contains("model not found") || lower.contains("model_not_found") || lower.contains("not found for api version") ->
-                "Model not found. Check your model selection in Settings."
-            lower.contains("safety") || lower.contains("content_filter") || lower.contains("recitation") ||
-                lower.contains("blocked by safety") || lower.contains("finish_reason: safety") ||
-                lower.contains("failed_generation") ->
-                "Response blocked by safety filters. Try rephrasing."
-            lower.contains("empty response") || lower.contains("no content found") || lower.contains("no choices found") ->
-                "Model returned an empty response. Try again."
-            lower.contains("timeout") || lower.contains("timed out") ->
-                "Request timed out. Check your connection."
-            lower.contains("unable to resolve host") || lower.contains("no address associated") ||
-                lower.contains("network is unreachable") || lower.contains("no route to host") ||
-                lower.contains("software caused connection abort") || lower.contains("connection reset") ||
-                lower.contains("broken pipe") ->
-                "No internet connection."
-            lower.contains("connection refused") || lower.contains("connect failed") ->
-                "Could not reach the API. Check your endpoint URL."
-            lower.contains("bad request") ->
-                "Request failed. Check your settings."
-            else -> raw
-        }
+    /**
+     * Runs a paste-fallback clipboard restore that has not fired yet. Both onInterrupt and
+     * onDestroy call handler.removeCallbacksAndMessages(null), which cancelled the pending
+     * +500ms restore and left SwiftSlate's temp clip (the user's transformed text) on the
+     * clipboard for good.
+     */
+    private fun flushPendingClipRestore() {
+        val pending = pendingClipRestore ?: return
+        pendingClipRestore = null
+        restoreClipboard(pending.first, pending.second, pending.third)
     }
+
+    private fun mapErrorMessage(raw: String): String = getString(ErrorMessages.map(raw))
 
     private suspend fun showToast(msg: String) = withContext(Dispatchers.Main) {
-        dismissOverlayToast()
-        val wm = getSystemService(Context.WINDOW_SERVICE) as WindowManager
-
-        val textView = TextView(applicationContext).apply {
-            text = msg
-            setTextColor(Color.WHITE)
-            textSize = 14f
-            setPadding(dp(24), dp(12), dp(24), dp(12))
-            maxWidth = (resources.displayMetrics.widthPixels * 0.85).toInt()
-            background = GradientDrawable().apply {
-                setColor(TOAST_BACKGROUND_COLOR)
-                cornerRadius = dp(24).toFloat()
-            }
-            gravity = Gravity.CENTER
-            alpha = 0f
-            translationY = dp(TOAST_SLIDE_DISTANCE_DP).toFloat()
-        }
-
-        val params = WindowManager.LayoutParams(
-            WindowManager.LayoutParams.WRAP_CONTENT,
-            WindowManager.LayoutParams.WRAP_CONTENT,
-            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE,
-            PixelFormat.TRANSLUCENT
-        ).apply {
-            gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
-            y = dp(TOAST_BOTTOM_MARGIN_DP)
-            windowAnimations = 0
-        }
-
-        try {
-            wm.addView(textView, params)
-            currentOverlayToast = textView
-
-            AnimatorSet().apply {
-                playTogether(
-                    ObjectAnimator.ofFloat(textView, View.ALPHA, 0f, 1f),
-                    ObjectAnimator.ofFloat(textView, View.TRANSLATION_Y, dp(TOAST_SLIDE_DISTANCE_DP).toFloat(), 0f)
-                )
-                duration = TOAST_ANIM_DURATION_MS
-                interpolator = DecelerateInterpolator()
-                start()
-                enterAnimator = this
-            }
-
-            val runnable = Runnable { dismissOverlayToastAnimated() }
-            dismissRunnable = runnable
-            handler.postDelayed(runnable, TOAST_DURATION_MS)
-        } catch (_: Exception) {
-            Toast.makeText(applicationContext, msg, Toast.LENGTH_SHORT).show()
-        }
-    }
-
-    private fun dismissOverlayToast() {
-        dismissRunnable?.let { handler.removeCallbacks(it) }
-        dismissRunnable = null
-        enterAnimator?.cancel()
-        enterAnimator = null
-        dismissAnimator?.cancel()
-        dismissAnimator = null
-        currentOverlayToast?.let { view ->
-            try {
-                view.visibility = View.GONE
-                val wm = getSystemService(Context.WINDOW_SERVICE) as WindowManager
-                wm.removeView(view)
-            } catch (_: Exception) {}
-            currentOverlayToast = null
-        }
-    }
-
-    private fun dismissOverlayToastAnimated() {
-        dismissRunnable?.let { handler.removeCallbacks(it) }
-        dismissRunnable = null
-        enterAnimator?.cancel()
-        enterAnimator = null
-        dismissAnimator?.cancel()
-        currentOverlayToast?.let { view ->
-            try {
-                val wm = getSystemService(Context.WINDOW_SERVICE) as WindowManager
-                dismissAnimator = AnimatorSet().apply {
-                    playTogether(
-                        ObjectAnimator.ofFloat(view, View.ALPHA, view.alpha, 0f),
-                        ObjectAnimator.ofFloat(view, View.TRANSLATION_Y, view.translationY, dp(TOAST_SLIDE_DISTANCE_DP).toFloat())
-                    )
-                    duration = TOAST_ANIM_DURATION_MS
-                    interpolator = DecelerateInterpolator()
-                    addListener(object : android.animation.AnimatorListenerAdapter() {
-                        override fun onAnimationEnd(animation: android.animation.Animator) {
-                            view.visibility = View.GONE
-                            try { wm.removeView(view) } catch (_: Exception) {}
-                            dismissAnimator = null
-                        }
-                    })
-                    start()
-                }
-            } catch (_: Exception) {}
-            currentOverlayToast = null
-        }
+        overlayToast.show(msg)
     }
 
     @Suppress("DEPRECATION")
@@ -912,8 +1042,8 @@ class AssistantService : AccessibilityService() {
     }
 
     override fun onInterrupt() {
+        flushPendingClipRestore()
         isProcessing.set(false)
-        processingStartedAt = 0L
         currentJob?.cancel()
         serviceJob.cancelChildren()
         handler.removeCallbacksAndMessages(null)
@@ -921,18 +1051,19 @@ class AssistantService : AccessibilityService() {
         lastReplacedAt = 0L
         lastReplacedSource?.safeRecycle()
         lastReplacedSource = null
-        dismissOverlayToast()
+        overlayToast.dismiss()
     }
 
     override fun onDestroy() {
         super.onDestroy()
+        flushPendingClipRestore()
         isProcessing.set(false)
         lastReplacedText = null
         lastReplacedAt = 0L
         lastReplacedSource?.safeRecycle()
         lastReplacedSource = null
         handler.removeCallbacksAndMessages(null)
-        dismissOverlayToast()
+        overlayToast.dismiss()
         serviceScope.cancel()
     }
 }

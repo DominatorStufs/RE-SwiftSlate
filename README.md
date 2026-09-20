@@ -20,10 +20,17 @@ Type a trigger like **`?fix`** at the end of any text, in any app, and watch it 
 [![License: MIT](https://img.shields.io/badge/MIT-blue?style=for-the-badge&logo=opensourceinitiative&logoColor=white)](LICENSE)
 
 [![Latest Release](https://img.shields.io/github/v/release/Musheer360/SwiftSlate?style=flat-square&label=Latest&color=brightgreen)](https://github.com/Musheer360/SwiftSlate/releases/latest)
+[![Downloads](https://img.shields.io/github/downloads/Musheer360/SwiftSlate/total?style=flat-square&label=Downloads&color=brightgreen)](https://github.com/Musheer360/SwiftSlate/releases)
+[![F-Droid](https://img.shields.io/f-droid/v/com.musheer360.swiftslate?style=flat-square)](https://f-droid.org/en/packages/com.musheer360.swiftslate/)
 [![GitHub Stars](https://img.shields.io/github/stars/Musheer360/SwiftSlate?style=flat-square&color=yellow)](https://github.com/Musheer360/SwiftSlate/stargazers)
-[![APK Size](https://img.shields.io/badge/APK_Size-~1.2_MB-blue?style=flat-square)](#)
-[![API 23+](https://img.shields.io/badge/Min_SDK-API_23-orange?style=flat-square)](#)
+[![APK Size](https://img.shields.io/badge/APK_Size-~1.7_MB-blue?style=flat-square)](#)
 [![Build](https://img.shields.io/github/actions/workflow/status/Musheer360/SwiftSlate/build.yml?branch=master&style=flat-square&label=CI)](https://github.com/Musheer360/SwiftSlate/actions/workflows/build.yml)
+
+<br>
+
+<a href="https://trendshift.io/repositories/25274?utm_source=repository-badge&utm_medium=badge&utm_campaign=badge-repository-25274" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/repositories/25274" alt="Musheer360/SwiftSlate | Trendshift" width="250" height="55"/></a>
+<a href="https://trendshift.io/repositories/25274?utm_source=trendshift-badge&utm_medium=badge&utm_campaign=badge-trendshift-25274" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/trendshift/repositories/25274/daily?language=Kotlin" alt="Musheer360/SwiftSlate | Trendshift" width="250" height="55"/></a>
+<a href="https://trendshift.io/repositories/25274?utm_source=trendshift-badge&utm_medium=badge&utm_campaign=badge-trendshift-25274" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/trendshift/repositories/25274/weekly?language=Kotlin" alt="Musheer360/SwiftSlate | Trendshift" width="250" height="55"/></a>
 
 <br>
 
@@ -40,6 +47,9 @@ Type a trigger like **`?fix`** at the end of any text, in any app, and watch it 
 > [!NOTE]
 > **SwiftSlate works in most apps** — WhatsApp, Gmail, Twitter/X, Messages, Notes, and more. No copy-pasting. No app switching. Just type and go. Some apps with custom input fields may not be supported ([see limitations](#%EF%B8%8F-known-limitations)).
 
+> [!TIP]
+> **Looking for the Windows version?** Check out [**SwiftSlate Desktop**](https://github.com/Musheer360/SwiftSlate-Desktop) — same concept, works system-wide on Windows 10/11.
+
 <br>
 
 ## 📋 Table of Contents
@@ -51,6 +61,7 @@ Type a trigger like **`?fix`** at the end of any text, in any app, and watch it 
 - [Supported AI Providers](#-supported-ai-providers)
 - [Getting Started](#-getting-started)
 - [How It Works](#%EF%B8%8F-how-it-works)
+- [Text-Selection Menu](#%EF%B8%8F-text-selection-menu)
 - [Custom Commands](#-custom-commands)
 - [API Key Management](#-api-key-management)
 - [Backup & Restore](#-backup--restore)
@@ -61,6 +72,7 @@ Type a trigger like **`?fix`** at the end of any text, in any app, and watch it 
 - [Tech Stack](#%EF%B8%8F-tech-stack)
 - [Architecture](#-architecture)
 - [Building from Source](#-building-from-source)
+- [Trying a Pull Request](#-trying-a-pull-request-without-touching-your-install)
 - [Contributing](#-contributing)
 - [Sponsors](#-sponsors)
 - [Support the Project](#-support-the-project)
@@ -73,19 +85,19 @@ Type a trigger like **`?fix`** at the end of any text, in any app, and watch it 
 
 ```
 📝  You type       →  "i dont no whats hapening ?fix"
-⏳  SwiftSlate      →  ◐ ◓ ◑ ◒  (processing...)
+⏳  You see        →  "i dont no whats hapening ◐"  (spinner animates)
 ✅  Result         →  "I don't know what's happening."
 ```
 
 ```
 📝  You type       →  "hey can u send me that file ?formal"
-⏳  SwiftSlate      →  ◐ ◓ ◑ ◒  (processing...)
+⏳  You see        →  "hey can u send me that file ◐"  (spinner animates)
 ✅  Result         →  "Could you please share the file at your earliest convenience?"
 ```
 
 ```
 📝  You type       →  "Hello, how are you? ?translate:es"
-⏳  SwiftSlate      →  ◐ ◓ ◑ ◒  (processing...)
+⏳  You see        →  "Hello, how are you? ◐"  (spinner animates)
 ✅  Result         →  "Hola, ¿cómo estás?"
 ```
 
@@ -100,8 +112,11 @@ Type a trigger like **`?fix`** at the end of any text, in any app, and watch it 
 ### 🌐 Works Almost Everywhere
 Integrates at the system level via Android's Accessibility Service. Works in **most apps** — messaging, email, social media, notes, browsers, and more. Some apps with custom input fields may not be supported ([see limitations](#%EF%B8%8F-known-limitations)).
 
+### ✂️ Text-Selection Menu
+Select any text, tap **SwiftSlate** in the Copy/Share popup, and pick a command — no accessibility permission required. Works in any app that offers Android's text-selection menu, including apps the accessibility flow can't reach.
+
 ### ⚡ Instant Inline Replacement
-Type, trigger, done. The AI response replaces your text directly in the same field — no copy-pasting, no app switching. A spinner (`◐ ◓ ◑ ◒`) shows progress for AI commands; text replacer commands execute instantly.
+Type, trigger, done. The AI response replaces your text directly in the same field — no copy-pasting, no app switching. While processing, an animated spinner appends to your text (e.g., `how r u ◐`) so you always see progress. Text replacer commands execute instantly.
 
 ### 🔑 Multi-Key Rotation
 Add multiple API keys for automatic round-robin rotation. If one key hits a rate limit, SwiftSlate seamlessly switches to the next.
@@ -119,10 +134,13 @@ Ships with Google Gemini, Groq, or connect **any OpenAI-compatible endpoint** �
 **AI commands** send text to your provider for intelligent transformation. **Text replacer commands** run entirely offline for instant local text manipulation — no API key needed.
 
 ### 🔒 Encrypted Key Storage
-API keys are encrypted with **AES-256-GCM** using the Android Keystore. Your keys never leave your device unencrypted.
+API keys are encrypted with **AES-256-GCM** using the Android Keystore before being written to disk — they never leave your device unencrypted.
 
-### 🌍 Localized in 7 Languages
-App UI available in English, French, German, Spanish, Portuguese (BR), Hindi, and Simplified Chinese.
+### 🌍 Localized in 40 Languages
+The UI ships in 40 languages and automatically follows your device's language, falling back to English when a translation isn't available.
+
+### 🚫 Zero Analytics
+No telemetry, no tracking, no crash reporting — text is sent only to your configured AI provider, never anywhere else.
 
 </td>
 </tr>
@@ -132,7 +150,7 @@ App UI available in English, French, German, Spanish, Portuguese (BR), Hindi, an
 
 ## 🧩 Built-in Commands
 
-SwiftSlate ships with **10 AI-powered commands** plus dynamic translation — ready to use out of the box:
+SwiftSlate ships with **9 AI-powered commands**, dynamic translation, and **5 built-in local commands** — ready to use out of the box. The AI commands are seeded as editable entries, so you can reword or delete any of them:
 
 | Trigger | Action | Example |
 |:--------|:-------|:--------|
@@ -167,6 +185,20 @@ Use any standard language code with `?translate:XX`:
 
 </details>
 
+### 📋 Clipboard Commands
+
+SwiftSlate also includes **4 clipboard commands** that work entirely offline, using the real Android system clipboard:
+
+| Trigger | Action | Example |
+|:--------|:-------|:--------|
+| **`?copy`** | Copy preceding text to the clipboard | `Hello world?copy` → copies "Hello world" |
+| **`?cut`** | Cut preceding text (copy + delete) | `Hello world?cut` → cuts "Hello world" |
+| **`?paste`** | Paste after existing text | Type `?paste` → appends the clipboard contents |
+| **`?replace`** | Replace all text with clipboard content | Type `?replace` → replaces field content with the clipboard contents |
+
+> [!NOTE]
+> `?paste` and `?replace` work with anything you've copied, in any app. Since Android 10, an accessibility service can't *read* the clipboard (only the focused app and the active keyboard can), so SwiftSlate doesn't try — it asks the text field itself to paste, which the app performs under its own focus. If a field ignores that request, SwiftSlate falls back to the last text you copied with `?copy` or `?cut`.
+
 <br>
 
 ## 🛠️ Text Replacer Commands
@@ -189,8 +221,8 @@ Beyond AI, you can create **text replacer commands** that run **entirely offline
 
 | Provider | Models | Notes |
 |:---------|:-------|:------|
-| **Google Gemini** (default) | `gemini-2.5-flash-lite`, `gemini-3-flash-preview`, `gemini-3.1-flash-lite-preview` | Free tier available at [aistudio.google.com](https://aistudio.google.com) |
-| **Groq** | `llama-3.3-70b-versatile`, `llama-3.1-8b-instant`, `openai/gpt-oss-120b`, `openai/gpt-oss-20b`, `meta-llama/llama-4-scout-17b-16e-instruct` | Free tier at [console.groq.com](https://console.groq.com/keys) |
+| **Google Gemini** (default) | `gemini-3.5-flash-lite` (default), `gemini-3.6-flash` | Free tier available at [aistudio.google.com](https://aistudio.google.com) |
+| **Groq** | `openai/gpt-oss-120b` (default), `qwen/qwen3.6-27b` | Free tier at [console.groq.com](https://console.groq.com/keys) |
 | **Custom (OpenAI-compatible)** | Any model your endpoint supports | Works with Ollama, LM Studio, vLLM, any `/v1/chat/completions` endpoint |
 
 > [!TIP]
@@ -210,7 +242,13 @@ Beyond AI, you can create **text replacer commands** that run **entirely offline
 ### Installation
 
 > [!TIP]
-> The APK is only ~1.2 MB — lightweight with zero external dependencies for networking or JSON.
+> The APK is only ~1.4 MB — lightweight with zero external dependencies for networking or JSON.
+
+**Option 1 — F-Droid:**
+
+[<img src="https://f-droid.org/badge/get-it-on.png" alt="Get it on F-Droid" height="80">](https://f-droid.org/en/packages/com.musheer360.swiftslate/)
+
+**Option 2 — GitHub Releases:**
 
 **1.** Download the latest APK from the [**Releases**](https://github.com/Musheer360/SwiftSlate/releases/latest) page
 
@@ -262,7 +300,7 @@ flowchart TD
     B -- "Text Replacer" --> C["⚡ Instant local replacement\n(no network call)"]
     B -- "AI Command" --> D["🔑 Selects next API key\n(round-robin)"]
     D --> E["🤖 Sends text + prompt\nto AI provider"]
-    E --> F["⏳ Shows inline spinner\n◐ ◓ ◑ ◒"]
+    E --> F["⏳ Spinner appended to text\nhow r u ◐ ◓ ◑ ◒"]
     F --> G["✅ Replaces text in-place"]
     C --> G
 
@@ -285,7 +323,7 @@ flowchart TD
 3. **Longest Match** — When a potential match is found, it searches for the longest matching trigger at the end of the text
 4. **Command Routing** — Text replacer commands execute immediately on-device. AI commands proceed to the API call path
 5. **API Call** — The text + prompt is sent to the configured AI provider using the next available key in the round-robin rotation
-6. **Inline Spinner** — While waiting for the AI response, a spinner animation (`◐ ◓ ◑ ◒`) replaces the text to provide visual feedback
+6. **Inline Spinner** — While waiting for the AI response, the trigger is replaced with an animated spinner appended to your original text (e.g., `how r u ◐`) to show progress
 7. **Watchdog Timer** — A 120-second safety timer auto-cancels stuck processing jobs to prevent the service from becoming unresponsive
 8. **Text Replacement** — The response replaces the original text using `ACTION_SET_TEXT`
 9. **Fallback Strategy** — If `ACTION_SET_TEXT` fails (some apps don't support it), SwiftSlate falls back to a clipboard-based select-all + paste approach
@@ -293,6 +331,19 @@ flowchart TD
 11. **Bounded Responses** — API responses are capped at 1 MB to prevent memory issues from malformed responses
 
 </details>
+
+<br>
+
+## ✂️ Text-Selection Menu
+
+Every app that offers Android's text-selection popup (the one with Copy, Cut, Share) can show **SwiftSlate** as an option, whether or not the accessibility service is enabled:
+
+1. Select text in any app
+2. Tap **SwiftSlate** in the popup
+3. Pick a command
+4. Get the result back with **Insert** (replaces the selection in-place, when the field allows it) or **Copy**
+
+It runs the same commands, requests, and errors as typing a trigger — just through a one-shot dialog that closes as soon as it's done, with no new permissions. Built-in clipboard commands (`?copy`, `?cut`, `?paste`, `?replace`, `?undo`) aren't available here since they need the live text field the accessibility flow has access to.
 
 <br>
 
@@ -382,7 +433,8 @@ SwiftSlate has **four screens** accessible via the bottom navigation bar:
 <td width="25%" valign="top">
 
 #### 📝 Commands
-- 10 built-in commands (read-only)
+- 5 built-in commands (read-only)
+- 9 AI commands, editable like your own
 - Add custom commands (AI or Text Replacer)
 - Edit existing custom commands
 - Delete custom commands
@@ -439,19 +491,24 @@ SwiftSlate has **four screens** accessible via the bottom navigation bar:
 
 ## 🌍 Localization
 
-SwiftSlate's UI is available in **7 languages**:
+SwiftSlate's UI is available in **40 languages**:
 
-| Language | Code |
-|:---------|:-----|
-| 🇺🇸 English | `en` |
-| 🇫🇷 French | `fr` |
-| 🇩🇪 German | `de` |
-| 🇪🇸 Spanish | `es` |
-| 🇧🇷 Portuguese (Brazil) | `pt-rBR` |
-| 🇮🇳 Hindi | `hi` |
-| 🇨🇳 Simplified Chinese | `zh-rCN` |
+| | | | |
+|:--|:--|:--|:--|
+| 🇺🇸 English `en` | 🇸🇦 Arabic `ar` | 🇧🇬 Bulgarian `bg` | 🇪🇸 Catalan `ca` |
+| 🇨🇿 Czech `cs` | 🇩🇰 Danish `da` | 🇩🇪 German `de` | 🇬🇷 Greek `el` |
+| 🇪🇸 Spanish `es` | 🇪🇪 Estonian `et` | 🇮🇷 Persian `fa` | 🇫🇮 Finnish `fi` |
+| 🇫🇷 French `fr` | 🇮🇳 Hindi `hi` | 🇭🇷 Croatian `hr` | 🇭🇺 Hungarian `hu` |
+| 🇮🇩 Indonesian `in` | 🇮🇹 Italian `it` | 🇮🇱 Hebrew `iw` | 🇯🇵 Japanese `ja` |
+| 🇰🇷 Korean `ko` | 🇱🇹 Lithuanian `lt` | 🇱🇻 Latvian `lv` | 🇲🇾 Malay `ms` |
+| 🇳🇴 Norwegian `nb` | 🇳🇱 Dutch `nl` | 🇵🇱 Polish `pl` | 🇵🇹 Portuguese `pt` |
+| 🇧🇷 Portuguese (BR) `pt-rBR` | 🇷🇴 Romanian `ro` | 🇷🇺 Russian `ru` | 🇸🇰 Slovak `sk` |
+| 🇸🇮 Slovenian `sl` | 🇷🇸 Serbian `sr` | 🇹🇭 Thai `th` | 🇹🇷 Turkish `tr` |
+| 🇺🇦 Ukrainian `uk` | 🇻🇳 Vietnamese `vi` | 🇨🇳 Chinese `zh` | 🇨🇳 Chinese (Simplified) `zh-rCN` |
 
-The app automatically uses your device's language. Contributions for additional translations are welcome!
+The app automatically uses your device's language, and falls back to English otherwise.
+
+Adding a translation is a single directory: drop `values-<locale>/strings.xml` into `app/src/main/res/` and it ships automatically — the build derives the shipped locale list from that folder, so nothing else needs editing. Contributions welcome.
 
 <br>
 
@@ -467,7 +524,7 @@ The app automatically uses your device's language. Contributions for additional 
 | 🔐 | **Key Storage** | API keys are encrypted with AES-256-GCM using the Android Keystore system. Encryption failures throw rather than falling back to plaintext. |
 | 📊 | **Analytics** | **None.** Zero telemetry, zero tracking, zero crash reporting. |
 | 📖 | **Open Source** | The entire codebase is open for inspection under the MIT License. |
-| 🔑 | **Permissions** | Only requires the Accessibility Service permission — nothing else. |
+| 🔑 | **Permissions** | Requires Accessibility Service and notification permissions only. |
 | 💾 | **Backups** | API keys and settings are excluded from Android cloud backups and device transfers. |
 
 <br>
@@ -475,12 +532,13 @@ The app automatically uses your device's language. Contributions for additional 
 ## 🏗️ Tech Stack
 
 <table>
-<tr><td><strong>Language</strong></td><td>Kotlin 2.1</td></tr>
+<tr><td><strong>Language</strong></td><td>Kotlin 2.4</td></tr>
 <tr><td><strong>UI</strong></td><td>Jetpack Compose · Material 3</td></tr>
 <tr><td><strong>Async</strong></td><td>Kotlin Coroutines</td></tr>
 <tr><td><strong>HTTP</strong></td><td><code>HttpURLConnection</code> (zero external dependencies)</td></tr>
 <tr><td><strong>JSON</strong></td><td><code>org.json</code> (Android built-in)</td></tr>
 <tr><td><strong>Storage</strong></td><td>SharedPreferences (encrypted via Android Keystore)</td></tr>
+<tr><td><strong>Background Work</strong></td><td>WorkManager (daily update checks)</td></tr>
 <tr><td><strong>Core Service</strong></td><td>Android Accessibility Service</td></tr>
 <tr><td><strong>Build System</strong></td><td>Gradle with Kotlin DSL</td></tr>
 <tr><td><strong>Java Target</strong></td><td>JDK 17</td></tr>
@@ -497,31 +555,55 @@ The app automatically uses your device's language. Contributions for additional 
 ```
 com.musheer360.swiftslate/
 ├── service/
-│   └── AssistantService.kt      # Core accessibility service — event listening,
-│                                 # trigger detection, text replacement, inline spinner
+│   ├── AssistantService.kt      # Core accessibility service — event listening, trigger
+│   │                            # detection, text replacement, undo, inline spinner
+│   ├── CommandRunner.kt         # Shared request policy (key rotation, rate-limit backoff,
+│   │                            # error mapping) used by both the accessibility service and
+│   │                            # the text-selection popup
+│   ├── ErrorMessages.kt         # Maps raw provider/network errors to localized strings
+│   └── OverlayToast.kt          # TYPE_ACCESSIBILITY_OVERLAY toast with enter/exit animation
 ├── api/
 │   ├── GeminiClient.kt          # Google Gemini API client
 │   ├── OpenAICompatibleClient.kt # Unified client for Groq + any OpenAI-compatible endpoint
-│   └── ApiClientUtils.kt        # Shared utilities — response parsing, error handling,
-│                                 # structured output extraction, system prompt
+│   └── ApiClientUtils.kt        # Shared utilities — response parsing, error classification,
+│                                # refusal detection, secret redaction, system prompt
 ├── manager/
-│   ├── KeyManager.kt            # AES-256-GCM encrypted key storage, round-robin rotation,
-│   │                            # rate-limit tracking, invalid key detection
-│   └── CommandManager.kt        # Command CRUD, trigger matching (longest-match),
-│                                # prefix migration, import/export
+│   ├── KeyManager.kt            # Key storage, round-robin rotation, rate-limit tracking,
+│   │                            # invalid-key benching with expiry
+│   ├── KeyCipher.kt             # AES-256-GCM via AndroidKeyStore, behind an interface so
+│   │                            # KeyManager is testable without the keystore
+│   ├── CommandManager.kt        # Command CRUD, trigger matching (longest-match),
+│   │                            # prefix migration, import/export
+│   └── StatsManager.kt          # Usage counters — monthly total, per-command, last 7 days
+├── provider/
+│   └── ProviderConfig.kt        # Per-provider config (transport, endpoint, model key,
+│                                # reasoning/thinking params) + registry
 ├── model/
 │   ├── Command.kt               # Command data class (AI or Text Replacer)
+│   ├── GeminiModels.kt          # Gemini model catalog + per-model thinking level
+│   ├── GroqModels.kt            # Groq model catalog + per-model reasoning params
+│   ├── PrefKeys.kt              # SharedPreferences key constants
 │   └── ProviderType.kt          # Provider constants (gemini, groq, custom)
 ├── ui/
-│   ├── DashboardScreen.kt       # Service status, key count, quick-start guide
+│   ├── DashboardScreen.kt       # Service status, key count, usage stats, 7-day chart
 │   ├── KeysScreen.kt            # API key management with live validation
 │   ├── CommandsScreen.kt        # Command list, add/edit/delete with collapsible form
-│   ├── SettingsScreen.kt        # Provider, model, prefix, backup/restore
-│   ├── components/              # Reusable UI components (cards, text fields, dividers)
+│   ├── SettingsScreen.kt        # Provider, model, temperature, prefix, backup/restore
+│   ├── processtext/             # ACTION_PROCESS_TEXT entry point (the text-selection menu)
+│   │   ├── ProcessTextActivity.kt      # One-shot dialog activity, owns the bottom sheet
+│   │   ├── ProcessTextViewModel.kt     # Picker -> loading -> result state machine
+│   │   ├── ProcessTextInput.kt         # Parses/validates the system-provided selection
+│   │   └── ProcessTextReplacement.kt   # Correlates a finished popup result with the next
+│   │                                    # accessibility event to auto-replace in-place
+│   ├── components/              # Reusable UI components (cards, text fields, dividers,
+│   │                            # the app's own bottom sheet and toast)
 │   └── theme/Theme.kt           # AMOLED dark + light Material 3 color schemes
 ├── MainActivity.kt              # AnimatedContent tab navigation (4 tabs)
 ├── SwiftSlateViewModel.kt       # Shared ViewModel exposing managers + prefs
-└── SwiftSlateApp.kt             # Application class — SharedPreferences pre-warming
+├── SwiftSlateApp.kt             # Application class — SharedPreferences pre-warming,
+│                                # WorkManager update check scheduling
+└── worker/
+    └── UpdateCheckWorker.kt     # Daily background check for new GitHub releases
 ```
 
 <br>
@@ -571,10 +653,33 @@ export KEY_PASSWORD=your_key_password
 
 <br>
 
+## 🧪 Trying a Pull Request Without Touching Your Install
+
+Every pull request builds a **preview APK** you can install side by side with a stable release.
+
+It ships as a separate app — applicationId `com.musheer360.swiftslate.preview`, shown on your launcher as **SwiftSlate Preview** — so installing it never replaces your stable build and never touches its API keys, commands, stats or accessibility setting. Both appear as separate entries under Settings → Accessibility, and you can enable whichever you want to test.
+
+1. Open the pull request's **Checks** tab and pick the latest **Build & Release** run
+2. Download the `SwiftSlate-preview-prNNN` artifact from the **Artifacts** section
+3. Unzip and install the APK, then enable **SwiftSlate Preview** in accessibility settings
+4. Uninstall it when you're done — your stable install is untouched throughout
+
+Preview builds are shrunk and non-debuggable like release builds, but signed with a debug key, so they'll never silently update your stable app. To build one locally:
+
+```bash
+./gradlew assemblePreview
+# app/build/outputs/apk/preview/app-preview.apk
+```
+
+<br>
+
 ## ⚠️ Known Limitations
 
-- **Some apps use custom input fields** that don't support Android's standard text replacement APIs. SwiftSlate includes a clipboard-based fallback, but apps like **WeChat** and **Chrome's address bar** may still not work. Most standard text fields (messaging apps, email composers, notes, etc.) work fine.
-- **Some OEMs restrict accessibility services.** Certain manufacturers (e.g., OnePlus, Xiaomi) may hide or block third-party accessibility services in their settings UI. If SwiftSlate doesn't appear in your accessibility settings, check for a "Downloaded apps" or "Installed services" section, or try searching for it.
+- **Some apps use custom input fields** that don't support Android's standard text replacement APIs. SwiftSlate includes a clipboard-based fallback and a focused-node fallback, but note-taking apps built on WebView or custom editors (Google Keep, Samsung Notes, some Zoho fields) can still ignore replacements — text replacement works most reliably in apps with standard text fields (WhatsApp, Telegram, Gmail, etc.). The [text-selection menu](#%EF%B8%8F-text-selection-menu) works in all of them, since it doesn't rely on the accessibility service.
+- **WeChat deliberately degrades third-party accessibility services.** Since WeChat 8.0.52+, non-whitelisted services (everything except system apps) receive wiped or faked node trees and incomplete text-change events — this is enforced by WeChat itself and cannot be fixed from any accessibility app. SwiftSlate cannot reliably detect triggers inside WeChat chat input; use the [text-selection menu](#%EF%B8%8F-text-selection-menu) there instead.
+- **Some OEMs restrict accessibility services.** Certain manufacturers (e.g., OnePlus, Xiaomi) may hide or block third-party accessibility services in their settings UI. If SwiftSlate doesn't appear in your accessibility settings, check for a "Downloaded apps" or "Installed services" section, or try searching for it. On Android 13+, sideloaded apps must also be allowed via **App info → ⋮ → Allow restricted settings** before the accessibility toggle unlocks.
+- **Aggressive battery optimization can silently disable the service.** Some OEM skins (Xiaomi/MIUI, OnePlus/OxygenOS, Infinix/XOS, Samsung One UI, and others) kill background accessibility services after a period of inactivity to save battery, and Android itself does not let an accessibility service run as a foreground/persistent service to defend against this. If SwiftSlate stops responding and shows as inactive on the Dashboard after running for a while, this is the most common cause — re-enable it in Accessibility Settings and, per OEM: **Xiaomi/HyperOS** — enable *Autostart*, set Battery saver to *No restrictions*, lock SwiftSlate in Recents, and avoid Ultra Battery Saver (its force-stop also strips the permission, which flips the toggle itself OFF); **Infinix/XOS and OnePlus/OxygenOS** — set battery to *No restrictions* / *Don't optimize* and lock the app in Recents; **Samsung One UI** — set battery to *Unrestricted*, disable *Remove permissions if app is unused*, and remove the app from Sleeping/Deep-sleeping lists. If the service actually crashed, the Dashboard now shows a "SwiftSlate was interrupted" banner with a one-tap re-enable.
+- **Some banking apps refuse to open while any accessibility service is enabled**, including SwiftSlate. This is a security measure the bank's app controls entirely — it checks the OS's list of enabled accessibility services and blocks itself if that list isn't empty, regardless of which app is on it or what that app actually does. There's no manifest flag or API that lets a legitimate accessibility tool opt out of another app's own check, so this can't be fixed on SwiftSlate's end. Disable SwiftSlate's accessibility permission before opening the affected banking app, then re-enable it afterward. The [text-selection menu](#%EF%B8%8F-text-selection-menu) still works with accessibility disabled, since it doesn't use the service at all.
 
 <br>
 
@@ -645,11 +750,11 @@ This project is licensed under the **MIT License** — see the [LICENSE](LICENSE
 
 <div align="center">
 
-<a href="https://star-history.com/#Musheer360/SwiftSlate&Date">
+<a href="https://star-history.dera.page/#Musheer360/SwiftSlate&Date">
   <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/svg?repos=Musheer360/SwiftSlate&type=Date&theme=dark" />
-    <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/svg?repos=Musheer360/SwiftSlate&type=Date" />
-    <img alt="Star History Chart" src="https://api.star-history.com/svg?repos=Musheer360/SwiftSlate&type=Date" width="600" />
+    <source media="(prefers-color-scheme: dark)" srcset="https://star-history.dera.page/svg?repos=Musheer360/SwiftSlate&type=Date&theme=dark" />
+    <source media="(prefers-color-scheme: light)" srcset="https://star-history.dera.page/svg?repos=Musheer360/SwiftSlate&type=Date" />
+    <img alt="Star History Chart" src="https://star-history.dera.page/svg?repos=Musheer360/SwiftSlate&type=Date" width="600" />
   </picture>
 </a>
 

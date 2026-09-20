@@ -3,9 +3,12 @@ package com.musheer360.swiftslate.manager
 import android.app.Application
 import androidx.test.core.app.ApplicationProvider
 import com.musheer360.swiftslate.model.Command
+import com.musheer360.swiftslate.model.CommandType
 import org.junit.Assert.*
 import org.junit.Before
 import org.junit.Test
+import org.json.JSONArray
+import org.json.JSONObject
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 
@@ -77,7 +80,7 @@ class CommandManagerTest {
 
     @Test
     fun findCommand_longestMatchWins() {
-        commandManager.addCustomCommand(Command("?fix2", "Custom fix2 prompt"))
+        commandManager.saveCustomCommand(Command("?fix2", "Custom fix2 prompt"))
         val result = commandManager.findCommand("text?fix2")
         assertNotNull(result)
         assertEquals("?fix2", result!!.trigger)
@@ -87,17 +90,17 @@ class CommandManagerTest {
     // --- getCommands ---
 
     @Test
-    fun getCommands_returnsFourteenBuiltInByDefault() {
+    fun getCommands_returnsFifteenBuiltInByDefault() {
         val commands = commandManager.getCommands()
-        assertEquals(14, commands.size)
+        assertEquals(15, commands.size)
     }
 
     @Test
     fun getCommands_systemCommandsHaveIsBuiltInTrue() {
         val commands = commandManager.getCommands()
-        val systemTriggers = listOf("?undo", "?copy", "?cut", "?paste", "?replace")
+        val systemTriggers = listOf("?undo", "?copy", "?cut", "?paste", "?replace", "?translate:xx")
         val systemCommands = commands.filter { it.trigger in systemTriggers }
-        assertEquals(5, systemCommands.size)
+        assertEquals(6, systemCommands.size)
         assertTrue(systemCommands.all { it.isBuiltIn })
     }
 
@@ -112,9 +115,9 @@ class CommandManagerTest {
 
     @Test
     fun getCommands_afterAddingCustom_includesIt() {
-        commandManager.addCustomCommand(Command("?myCmd", "do something"))
+        commandManager.saveCustomCommand(Command("?myCmd", "do something"))
         val commands = commandManager.getCommands()
-        assertEquals(15, commands.size)
+        assertEquals(16, commands.size)
         assertTrue(commands.any { it.trigger == "?myCmd" })
     }
 
@@ -125,11 +128,11 @@ class CommandManagerTest {
         assertTrue(commands.filter { it.isBuiltIn }.all { it.trigger.startsWith("!") })
     }
 
-    // --- addCustomCommand / removeCustomCommand ---
+    // --- saveCustomCommand / removeCustomCommand ---
 
     @Test
-    fun addCustomCommand_makesFindable() {
-        commandManager.addCustomCommand(Command("?greet", "Say hello"))
+    fun saveCustomCommand_makesFindable() {
+        commandManager.saveCustomCommand(Command("?greet", "Say hello"))
         val result = commandManager.findCommand("hi?greet")
         assertNotNull(result)
         assertEquals("?greet", result!!.trigger)
@@ -137,7 +140,7 @@ class CommandManagerTest {
 
     @Test
     fun removeCustomCommand_makesUnfindable() {
-        commandManager.addCustomCommand(Command("?greet", "Say hello"))
+        commandManager.saveCustomCommand(Command("?greet", "Say hello"))
         commandManager.removeCustomCommand("?greet")
         assertNull(commandManager.findCommand("hi?greet"))
     }
@@ -189,10 +192,167 @@ class CommandManagerTest {
 
     @Test
     fun setTriggerPrefix_customCommandsMigrated() {
-        commandManager.addCustomCommand(Command("?myCmd", "do something"))
+        commandManager.saveCustomCommand(Command("?myCmd", "do something"))
         commandManager.setTriggerPrefix("!")
         val commands = commandManager.getCommands()
         assertTrue(commands.any { it.trigger == "!myCmd" })
         assertFalse(commands.any { it.trigger == "?myCmd" })
+    }
+
+
+    // --- write-path validation (shared by saveCustomCommand and importCommands) ---
+
+    @Test
+    fun saveCustomCommand_rejectsTriggerWithoutPrefix() {
+        assertFalse(commandManager.saveCustomCommand(Command("noprefix", "do a thing")))
+        assertNull(commandManager.findCommand("hello noprefix"))
+    }
+
+    @Test
+    fun saveCustomCommand_rejectsPrefixOnlyTrigger() {
+        assertFalse(commandManager.saveCustomCommand(Command("?", "do a thing")))
+    }
+
+    @Test
+    fun saveCustomCommand_rejectsBlankPrompt() {
+        assertFalse(commandManager.saveCustomCommand(Command("?thing", "   ")))
+    }
+
+    @Test
+    fun saveCustomCommand_rejectsOverlongTriggerAndPrompt() {
+        val longTrigger = "?" + "a".repeat(CommandManager.MAX_TRIGGER_LENGTH)
+        assertFalse(commandManager.saveCustomCommand(Command(longTrigger, "p")))
+        val longPrompt = "a".repeat(CommandManager.MAX_PROMPT_LENGTH + 1)
+        assertFalse(commandManager.saveCustomCommand(Command("?thing", longPrompt)))
+    }
+
+    @Test
+    fun saveCustomCommand_acceptsValidCommandAtTheLimits() {
+        val maxTrigger = "?" + "a".repeat(CommandManager.MAX_TRIGGER_LENGTH - 1)
+        assertTrue(commandManager.saveCustomCommand(Command(maxTrigger, "a".repeat(CommandManager.MAX_PROMPT_LENGTH))))
+        assertNotNull(commandManager.findCommand("hello $maxTrigger"))
+    }
+
+    /** Import is strictly more lenient than save: it sanitizes what the UI would reject. */
+    @Test
+    fun importCommands_sanitizesWhatSaveRejects() {
+        val overLongPrompt = "a".repeat(CommandManager.MAX_PROMPT_LENGTH + 10)
+        val overLongTrigger = "?" + "a".repeat(CommandManager.MAX_TRIGGER_LENGTH + 5)
+        val json = JSONArray()
+            .put(JSONObject().put("trigger", overLongTrigger).put("prompt", overLongPrompt).put("type", "AI"))
+            .put(JSONObject().put("trigger", "noprefix").put("prompt", "p").put("type", "AI"))
+            .toString()
+        assertTrue(commandManager.importCommands(json))
+        val stored = JSONArray(commandManager.exportCommands())
+        assertEquals(2, stored.length())
+        val first = stored.getJSONObject(0)
+        assertEquals(CommandManager.MAX_TRIGGER_LENGTH, first.getString("trigger").length)
+        assertEquals(CommandManager.MAX_PROMPT_LENGTH, first.getString("prompt").length)
+        val migrated = stored.getJSONObject(1)
+        assertEquals("?noprefix", migrated.getString("trigger"))
+    }
+
+    @Test
+    fun importCommands_dropsInvalidEntriesButKeepsValidOnes() {
+        val json = JSONArray()
+            .put(JSONObject().put("trigger", "   ").put("prompt", "p").put("type", "AI"))
+            .put(JSONObject().put("trigger", "?ok").put("prompt", "  ").put("type", "AI"))
+            .put(JSONObject().put("trigger", "?").put("prompt", "p").put("type", "AI"))
+            .put(JSONObject().put("trigger", "?good").put("prompt", "keep me").put("type", "AI"))
+            .toString()
+        assertTrue(commandManager.importCommands(json))
+        val stored = JSONArray(commandManager.exportCommands())
+        assertEquals(1, stored.length())
+        assertEquals("?good", stored.getJSONObject(0).getString("trigger"))
+    }
+
+    @Test
+    fun importCommands_emptyArray_isValidNoop() {
+        assertTrue(commandManager.importCommands("[]"))
+        assertEquals("[]", commandManager.exportCommands())
+    }
+
+    @Test
+    fun importCommands_keepsOnlyUpToTheMaximum() {
+        val arr = JSONArray()
+        for (i in 0 until (CommandManager.MAX_CUSTOM_COMMANDS + 5)) {
+            arr.put(JSONObject().put("trigger", "?c$i").put("prompt", "p").put("type", "AI"))
+        }
+        assertTrue(commandManager.importCommands(arr.toString()))
+        val stored = JSONArray(commandManager.exportCommands())
+        assertEquals(CommandManager.MAX_CUSTOM_COMMANDS, stored.length())
+    }
+
+    @Test
+    fun importCommands_unknownTypeDefaultsToAi() {
+        val json = JSONArray().put(
+            JSONObject().put("trigger", "?ok").put("prompt", "p").put("type", "SOMETHING_ELSE")
+        ).toString()
+        assertTrue(commandManager.importCommands(json))
+        val stored = JSONArray(commandManager.exportCommands())
+        assertEquals(CommandType.AI.name, stored.getJSONObject(0).getString("type"))
+    }
+
+    @Test
+    fun importCommands_keepsTextReplacerType() {
+        val json = JSONArray().put(
+            JSONObject().put("trigger", "?sig").put("prompt", "regards").put("type", "TEXT_REPLACER")
+        ).toString()
+        assertTrue(commandManager.importCommands(json))
+        val stored = JSONArray(commandManager.exportCommands())
+        assertEquals(CommandType.TEXT_REPLACER.name, stored.getJSONObject(0).getString("type"))
+    }
+
+    @Test
+    fun importCommands_rejectsMalformedJson() {
+        assertFalse(commandManager.importCommands("not json at all"))
+    }
+
+    @Test
+    fun importCommands_rejectsJsonWithNoUsableEntries() {
+        val json = JSONArray()
+            .put(JSONObject().put("trigger", "   ").put("prompt", "p").put("type", "AI"))
+            .put(JSONObject().put("trigger", "?ok").put("prompt", "").put("type", "AI"))
+            .toString()
+        assertFalse(commandManager.importCommands(json))
+    }
+
+    // --- updateCustomCommand ---
+
+    @Test
+    fun saveCustomCommand_renamesInASingleWrite() {
+        assertTrue(commandManager.saveCustomCommand(Command("?old", "original")))
+        assertTrue(commandManager.saveCustomCommand(Command("?new", "changed"), replacing = "?old"))
+        assertNull(commandManager.findCommand("hello ?old"))
+        val found = commandManager.findCommand("hello ?new")
+        assertNotNull(found)
+        assertEquals("changed", found!!.prompt)
+    }
+
+    @Test
+    fun saveCustomCommand_editingInPlaceDoesNotDuplicate() {
+        assertTrue(commandManager.saveCustomCommand(Command("?same", "v1")))
+        assertTrue(commandManager.saveCustomCommand(Command("?same", "v2")))
+        assertEquals(1, commandManager.getCommands().count { it.trigger == "?same" })
+        assertEquals("v2", commandManager.findCommand("x ?same")!!.prompt)
+    }
+
+    /** A rejected save must leave the existing command untouched rather than deleting it. */
+    @Test
+    fun saveCustomCommand_invalidReplacementKeepsOriginal() {
+        assertTrue(commandManager.saveCustomCommand(Command("?keep", "original")))
+        assertFalse(commandManager.saveCustomCommand(Command("bad", "x"), replacing = "?keep"))
+        assertEquals("original", commandManager.findCommand("y ?keep")!!.prompt)
+    }
+
+    // --- cache invalidation (the prefix is part of the cache key) ---
+
+    @Test
+    fun changingPrefixWithNoCustomCommands_stillUpdatesBuiltIns() {
+        assertNotNull(commandManager.findCommand("hello ?copy"))
+        commandManager.getCommands() // populate cache
+        assertTrue(commandManager.setTriggerPrefix("/"))
+        assertNotNull(commandManager.findCommand("hello /copy"))
+        assertNull(commandManager.findCommand("hello ?copy"))
     }
 }

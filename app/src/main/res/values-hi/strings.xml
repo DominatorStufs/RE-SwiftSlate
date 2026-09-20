@@ -20,6 +20,7 @@
     <string name="keys_valid_added">मान्य कुंजी जोड़ी गई!</string>
     <string name="keys_already_added">यह कुंजी पहले से जोड़ी जा चुकी है</string>
     <string name="keys_validation_failed">सत्यापन विफल</string>
+    <string name="keys_custom_endpoint_required">कस्टम प्रदाता के लिए कुंजी जोड़ने से पहले सेटिंग्स में एंडपॉइंट URL कॉन्फ़िगर करें</string>
     <string name="keys_get_api_key">अपनी %1$s API कुंजी प्राप्त करें ↗</string>
 
     <!-- Commands -->
@@ -89,7 +90,62 @@
     <string name="settings_temperature_title">तापमान</string>
     <string name="settings_made_by">Musheer Alam द्वारा प्यार से बनाया गया</string>
     <string name="settings_sponsor">GitHub पर प्रायोजित करें</string>
-    <string name="settings_backup_export">Export Commands</string>
-    <string name="settings_backup_import">Import Commands</string>
-    <string name="settings_version">Version %1$s</string>
+
+    <!-- Toasts and errors -->
+    <string name="toast_replace_failed">टेक्स्ट प्रतिस्थापित नहीं किया जा सका</string>
+    <string name="toast_custom_not_configured">कस्टम प्रदाता कॉन्फ़िगर नहीं है। सेटिंग्स में एंडपॉइंट और मॉडल सेट करें।</string>
+    <string name="toast_key_rate_limited">API कुंजी की दर सीमित है। %1$d सेकंड में पुनः प्रयास करें</string>
+    <string name="toast_no_keys">कोई API कुंजी कॉन्फ़िगर नहीं है</string>
+    <string name="toast_all_keys_invalid">सभी API कुंजियाँ अमान्य हैं। कृपया अपनी कुंजियाँ जाँचें</string>
+    <string name="toast_request_timed_out">अनुरोध का समय समाप्त हो गया</string>
+    <string name="process_text_title">कोई कमांड लागू करें</string>
+    <string name="process_text_replace">बदलें</string>
+    <string name="process_text_copy">कॉपी करें</string>
+    <string name="process_text_back">वापस</string>
+    <string name="process_text_retry">पुनः प्रयास करें</string>
+    <string name="process_text_copied">कॉपी किया गया</string>
+    <string name="process_text_no_selection">कोई टेक्स्ट चयनित नहीं है</string>
+    <string name="process_text_no_commands">कोई कमांड उपलब्ध नहीं है। SwiftSlate में एक कमांड जोड़ें।</string>
+    <string name="toast_restore_failed">मूल टेक्स्ट पुनर्स्थापित नहीं किया जा सका</string>
+    <string name="toast_nothing_to_undo">पूर्ववत करने के लिए कुछ नहीं है</string>
+    <string name="toast_undo_failed">पूर्ववत नहीं किया जा सका</string>
+    <string name="toast_nothing_to_copy">कॉपी करने के लिए कुछ नहीं है</string>
+    <string name="toast_copied">क्लिपबोर्ड पर कॉपी किया गया</string>
+    <string name="toast_nothing_to_cut">कट करने के लिए कुछ नहीं है</string>
+    <string name="toast_cut">क्लिपबोर्ड पर कट किया गया</string>
+    <string name="toast_clipboard_empty">क्लिपबोर्ड खाली है</string>
+    <string name="toast_clipboard_failed">क्लिपबोर्ड ऑपरेशन विफल</string>
+    <string name="error_no_model_access">आपकी API कुंजी को इस मॉडल तक पहुँच नहीं है।</string>
+    <string name="error_invalid_key">अमान्य API कुंजी। कृपया सेटिंग्स में अपनी कुंजी जाँचें।</string>
+    <string name="error_invalid_key_with_hint">अमान्य एपीआई कुंजी (%1$s)। कृपया सेटिंग्स में अपनी कुंजियों की जांच करें।</string>
+    <string name="error_rate_limited">दर सीमित। कृपया कुछ देर में पुनः प्रयास करें।</string>
+    <string name="error_model_not_found">मॉडल नहीं मिला। सेटिंग्स में अपने मॉडल चयन की जाँच करें।</string>
+    <string name="error_safety_blocked">सुरक्षा फ़िल्टर द्वारा प्रतिक्रिया अवरुद्ध। पुनः शब्दों में कहने का प्रयास करें।</string>
+    <string name="error_empty_response">मॉडल ने खाली प्रतिक्रिया दी। पुनः प्रयास करें।</string>
+    <string name="error_timeout_connection">अनुरोध का समय समाप्त हो गया। अपना कनेक्शन जाँचें।</string>
+    <string name="error_no_internet">कोई इंटरनेट कनेक्शन नहीं।</string>
+    <string name="error_endpoint_unreachable">API तक नहीं पहुँचा जा सका। अपना एंडपॉइंट URL जाँचें।</string>
+    <string name="error_bad_request">अनुरोध विफल। अपनी सेटिंग्स जाँचें।</string>
+
+    <!-- Updates and command descriptions -->
+    <string name="update_channel_name">ऐप अपडेट</string>
+    <string name="update_channel_desc">SwiftSlate का नया संस्करण उपलब्ध होने पर सूचित करता है</string>
+    <string name="update_available_title">SwiftSlate अपडेट उपलब्ध है</string>
+    <string name="update_available_text">नवीनतम रिलीज़ देखने के लिए टैप करें</string>
+    <string name="error_input_too_long">यह टेक्स्ट इस मॉडल की हर मिनट की टोकन सीमा के लिए बहुत लंबा है. छोटे टेक्स्ट के साथ दोबारा कोशिश करें.</string>
+    <string name="note_response_truncated">[नोट: जवाब अधूरा हो सकता है]</string>
+    <string name="error_provider_auth_required">एंडपॉइंट ने अनुरोध अस्वीकार कर दिया। अगर यह क्लाउड सर्वर है, तो सर्वर पर ही साइन इन करें (जैसे ollama signin)।</string>
+    <string name="keys_endpoint_needs_v1">एंडपॉइंट उपलब्ध है, लेकिन URL /v1 पर समाप्त होना चाहिए (जैसे http://host:11434/v1)।</string>
+    <string name="settings_fetch_models">मॉडल लाएँ</string>
+    <string name="settings_fetch_models_loading">लाया जा रहा है…</string>
+    <string name="settings_fetch_models_success">%1$d मॉडल लोड हुए</string>
+    <string name="settings_fetch_models_empty">कोई मॉडल नहीं मिला। आप फिर भी मैन्युअल रूप से मॉडल दर्ज कर सकते हैं।</string>
+    <string name="settings_fetch_models_failed">मॉडल नहीं लाए जा सके। एंडपॉइंट और API कुंजी जाँचें।</string>
+    <string name="settings_models_refresh">रिफ्रेश</string>
+    <string name="settings_models_need_key">मॉडल सूची लोड करने के लिए ऊपर कोई API कुंजी जोड़ें।</string>
+    <string name="settings_models_load_failed">मॉडल लोड नहीं हो सके। अपना कनेक्शन और API कुंजी जाँचें।</string>
+    <string name="settings_models_empty_provider">इस API कुंजी के लिए कोई मॉडल उपलब्ध नहीं है।</string>
+    <string name="dashboard_service_killed_title">SwiftSlate बाधित हो गया</string>
+    <string name="dashboard_service_killed_message">बैकग्राउंड सेवा अप्रत्याशित रूप से बंद हो गई। कमांड का उपयोग जारी रखने के लिए इसे सुलभता सेटिंग में फिर से सक्षम करें।</string>
+    <string name="dashboard_service_killed_dismiss">खारिज करें</string>
 </resources>

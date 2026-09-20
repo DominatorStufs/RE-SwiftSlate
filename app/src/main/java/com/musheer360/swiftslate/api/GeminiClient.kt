@@ -8,13 +8,56 @@ import java.net.ConnectException
 import java.net.HttpURLConnection
 import java.net.SocketTimeoutException
 import java.net.URL
+import java.net.URLEncoder
 import java.net.UnknownHostException
 
 class GeminiClient {
 
     companion object {
-        private val HTTP_CODE_REGEX = Regex("^HTTP_(\\d+):")
         private val HTTP_PREFIX_REGEX = Regex("^HTTP_\\d+:\\s*")
+        private const val MODELS_URL = "https://generativelanguage.googleapis.com/v1beta/models"
+        // The listing paginates; pageSize caps at 1000. Three pages is far beyond any
+        // realistic catalog — a bound so a hostile/broken nextPageToken loop cannot spin.
+        private const val MAX_LIST_PAGES = 3
+
+        /**
+         * Extracts chat-capable model ids from a v1beta/models response page. An entry
+         * is kept when either documented capability array names "generateContent";
+         * entries carrying neither array are kept (fail-open: a renamed field must not
+         * empty the whole dropdown). The leading "models/" path prefix is stripped;
+         * ids are de-duplicated in first-seen order; non-JSON bodies yield an empty list.
+         *
+         * Exposed for unit tests — the network path around it is not JVM-testable.
+         */
+        internal fun parseModelsJson(json: String): List<String> {
+            if (json.isBlank()) return emptyList()
+            return try {
+                val arr = JSONObject(json).optJSONArray("models") ?: return emptyList()
+                val out = LinkedHashSet<String>()
+                for (i in 0 until arr.length()) {
+                    val obj = arr.optJSONObject(i) ?: continue
+                    val methods = obj.optJSONArray("supportedGenerationMethods")
+                    val actions = obj.optJSONArray("supportedActions")
+                    if (methods != null || actions != null) {
+                        val supportsChat = arrayContains(methods, "generateContent") ||
+                            arrayContains(actions, "generateContent")
+                        if (!supportsChat) continue
+                    }
+                    obj.optString("name").trim()
+                        .takeIf { it.isNotBlank() }
+                        ?.let { out.add(it.removePrefix("models/")) }
+                }
+                out.toList()
+            } catch (_: Exception) {
+                emptyList()
+            }
+        }
+
+        private fun arrayContains(arr: JSONArray?, value: String): Boolean {
+            if (arr == null) return false
+            for (i in 0 until arr.length()) if (arr.optString(i) == value) return true
+            return false
+        }
     }
 
     suspend fun validateKey(apiKey: String): Result<String> = withContext(Dispatchers.IO) {
@@ -57,40 +100,89 @@ class GeminiClient {
         }
     }
 
+    /**
+     * Lists the chat-capable models available to [apiKey] via GET v1beta/models,
+     * powering the Settings screen's dynamic model dropdown (issue #148). Follows
+     * nextPageToken for up to [MAX_LIST_PAGES] pages; non-chat entries are dropped
+     * by [parseModelsJson]. Error mapping mirrors [validateKey].
+     */
+    suspend fun fetchModels(apiKey: String): Result<List<String>> = withContext(Dispatchers.IO) {
+        val collected = LinkedHashSet<String>()
+        var pageToken: String? = null
+        try {
+            var pages = 0
+            while (true) {
+                // Opaque tokens may contain '+', '/' or '=' — raw interpolation corrupts
+                // the query string ('+' decodes to a space server-side), so encode it.
+                val pageSuffix = if (pageToken.isNullOrEmpty()) ""
+                    else "&pageToken=" + URLEncoder.encode(pageToken, "UTF-8")
+                var connection: HttpURLConnection? = null
+                val responseCode: Int
+                val body: String
+                try {
+                    connection = URL("$MODELS_URL?pageSize=1000$pageSuffix")
+                        .openConnection() as HttpURLConnection
+                    connection.requestMethod = "GET"
+                    connection.setRequestProperty("x-goog-api-key", apiKey)
+                    connection.connectTimeout = 15_000
+                    connection.readTimeout = 15_000
+
+                    responseCode = connection.responseCode
+                    body = if (responseCode in 200..299) {
+                        ApiClientUtils.readResponseBounded(connection)
+                    } else {
+                        ApiClientUtils.readErrorBody(connection)
+                    }
+                } finally {
+                    connection?.disconnect()
+                }
+
+                if (responseCode !in 200..299) {
+                    val apiMessage = ApiClientUtils.extractApiErrorMessage(body)
+                    return@withContext when (responseCode) {
+                        429 -> Result.failure(Exception("Rate limited. Please try again later."))
+                        400, 403 -> Result.failure(Exception(
+                            apiMessage.ifEmpty { "Invalid API key" }))
+                        else -> Result.failure(Exception(
+                            "Error $responseCode: ${apiMessage.ifEmpty { "Unexpected error" }}"))
+                    }
+                }
+
+                collected.addAll(parseModelsJson(body))
+                pages++
+                pageToken = try {
+                    JSONObject(body).optString("nextPageToken", "")
+                } catch (_: Exception) {
+                    ""
+                }
+                if (pageToken.isNullOrEmpty() || pages >= MAX_LIST_PAGES) break
+            }
+            Result.success(collected.toList())
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
+
     suspend fun generate(
         prompt: String,
         text: String,
         apiKey: String,
         model: String,
         temperature: Double,
-        useStructuredOutput: Boolean = false
+        useStructuredOutput: Boolean = false,
+        thinkingLevel: String? = null
     ): Result<GenerateResult> = withContext(Dispatchers.IO) {
-        var soFailed = false
+        var result = doGenerate(prompt, text, apiKey, model, temperature, useStructuredOutput, thinkingLevel)
 
-        var result = doGenerate(prompt, text, apiKey, model, temperature, useStructuredOutput)
-
-        // Retry once for transient network errors
+        // Retry once for transient network/server errors (with 1.5s backoff)
         if (result.isFailure && result.exceptionOrNull().isTransientNetwork()) {
-            kotlinx.coroutines.delay(1000)
-            result = doGenerate(prompt, text, apiKey, model, temperature, useStructuredOutput)
+            kotlinx.coroutines.delay(1500)
+            result = doGenerate(prompt, text, apiKey, model, temperature, useStructuredOutput, thinkingLevel)
         }
 
-        val finalResult = if (useStructuredOutput && result.isFailure) {
-            val msg = result.exceptionOrNull()?.message ?: ""
-            val code = HTTP_CODE_REGEX.find(msg)?.groupValues?.get(1)?.toIntOrNull()
-            if (code == 400 || code == 422) {
-                val retry = doGenerate(prompt, text, apiKey, model, temperature, false)
-                if (retry.isSuccess) soFailed = true
-                stripHttpPrefix(retry.map { it.first })
-            } else {
-                stripHttpPrefix(result.map { it.first })
-            }
-        } else {
-            if (result.isSuccess && result.getOrNull()?.second == true) soFailed = true
-            stripHttpPrefix(result.map { it.first })
-        }
-
-        finalResult.map { GenerateResult(it, soFailed) }
+        val cleaned = stripHttpPrefix(result.map { it.text })
+        val meta = result.getOrNull()
+        cleaned.map { GenerateResult(it, meta?.structuredOutputFailed == true, meta?.truncated == true) }
     }
 
     private fun stripHttpPrefix(result: Result<String>): Result<String> {
@@ -108,8 +200,9 @@ class GeminiClient {
         apiKey: String,
         model: String,
         temperature: Double,
-        withStructured: Boolean
-    ): Result<Pair<String, Boolean>> {
+        withStructured: Boolean,
+        thinkingLevel: String? = null
+    ): Result<GenerateResult> {
         var connection: HttpURLConnection? = null
         return try {
             val safeModel = model.replace(Regex("[^a-zA-Z0-9._-]"), "")
@@ -134,7 +227,7 @@ class GeminiClient {
                     put(JSONObject().apply {
                         put("parts", JSONArray().apply {
                             put(JSONObject().apply {
-                                put("text", text)
+                                put("text", ApiClientUtils.wrapUserText(text))
                             })
                         })
                     })
@@ -149,6 +242,13 @@ class GeminiClient {
                 })
                 put("generationConfig", JSONObject().apply {
                     put("temperature", temperature)
+                    // Spec-driven thinking control (mirrors Groq reasoning params).
+                    // "minimal" keeps latency low; null => send no thinkingConfig.
+                    if (thinkingLevel != null) {
+                        put("thinkingConfig", JSONObject().apply {
+                            put("thinkingLevel", thinkingLevel)
+                        })
+                    }
                     if (withStructured) {
                         put("responseMimeType", "application/json")
                         put("responseSchema", JSONObject().apply {
@@ -191,21 +291,47 @@ class GeminiClient {
                         }
 
                         if (withStructured) {
-                            val (extracted, _) = ApiClientUtils.tryExtractStructuredText(resultText)
-                            if (extracted != null) return Result.success(Pair(extracted, false))
+                            val (extracted, parseFailed) = ApiClientUtils.tryExtractStructuredText(resultText)
+                            if (extracted != null) return Result.success(GenerateResult(extracted))
+                            // Same guard as the OpenAI-compatible client: never paste a raw
+                            // JSON payload into the user's field when the structured response
+                            // is unusable (parsed with no "text", or malformed/truncated JSON).
+                            if (!parseFailed || resultText.trimStart().startsWith("{")) {
+                                return Result.failure(Exception(
+                                    "Model returned empty response (${ApiClientUtils.STRUCTURED_UNUSABLE_MARKER})"))
+                            }
                         }
 
                         resultText = ApiClientUtils.stripMarkdownFences(resultText)
-                        if (finishReason == "MAX_TOKENS") {
-                            resultText += "\n\n[Note: Response may be truncated]"
-                        }
-                        Result.success(Pair(resultText, withStructured))
+                        Result.success(GenerateResult(
+                            resultText,
+                            structuredOutputFailed = withStructured,
+                            truncated = finishReason == "MAX_TOKENS"))
                     } else {
                         Result.failure(Exception("No content found in response"))
                     }
                 } else {
-                    Result.failure(Exception("No candidates found in response"))
+                    // No candidates at all: when Gemini blocks the *prompt* rather than the
+                    // response, the payload carries promptFeedback.blockReason and omits
+                    // candidates entirely. Reporting this as an empty response told the user
+                    // to "try again", which can never succeed.
+                    val blockReason = jsonResponse.optJSONObject("promptFeedback")
+                        ?.optString("blockReason", "") ?: ""
+                    if (blockReason.isNotEmpty()) {
+                        Result.failure(Exception("Response blocked by safety filters ($blockReason)"))
+                    } else {
+                        Result.failure(Exception("No candidates found in response"))
+                    }
                 }
+            } else if (responseCode == 413) {
+                // Request too large for this key's per-minute token budget. Groq enforces
+                // TPM per organization, so another key (different org) may still have
+                // headroom. Classified as a rate limit so the caller cools this key down
+                // briefly and rotates, instead of hard-failing the whole command.
+                val errorBody = ApiClientUtils.readErrorBody(connection)
+                val apiMessage = ApiClientUtils.extractApiErrorMessage(errorBody)
+                val detail = if (apiMessage.isNotEmpty()) apiMessage else "Request too large"
+                Result.failure(ApiException(ApiError.RequestTooLarge(detail), detail))
             } else if (responseCode == 429) {
                 val retryAfter = connection.getHeaderField("Retry-After")
                 val seconds = retryAfter?.toIntOrNull()
@@ -214,8 +340,16 @@ class GeminiClient {
             } else if (responseCode == 400 || responseCode == 422) {
                 val errorBody = ApiClientUtils.readErrorBody(connection)
                 val apiMessage = ApiClientUtils.extractApiErrorMessage(errorBody)
-                val detail = if (apiMessage.isNotEmpty()) apiMessage else "Bad request"
-                Result.failure(Exception("HTTP_${responseCode}: $detail"))
+                // Gemini reports invalid API keys as HTTP 400 (reason: API_KEY_INVALID).
+                // Classify as InvalidKey so the caller marks the key and rotates to the next one.
+                if (errorBody.contains("API_KEY_INVALID") ||
+                    apiMessage.contains("API key not valid", ignoreCase = true)) {
+                    val detail = if (apiMessage.isNotEmpty()) apiMessage else "Invalid API key"
+                    Result.failure(ApiException(ApiError.InvalidKey(detail), detail))
+                } else {
+                    val detail = if (apiMessage.isNotEmpty()) apiMessage else "Bad request"
+                    Result.failure(Exception("HTTP_${responseCode}: $detail"))
+                }
             } else if (responseCode == 401 || responseCode == 403) {
                 val errorBody = ApiClientUtils.readErrorBody(connection)
                 val apiMessage = ApiClientUtils.extractApiErrorMessage(errorBody)
@@ -223,7 +357,13 @@ class GeminiClient {
                 Result.failure(ApiException(ApiError.InvalidKey(detail), detail))
             } else {
                 val errorBody = ApiClientUtils.readErrorBody(connection)
-                val detail = ApiClientUtils.sanitizeErrorForUser(responseCode, errorBody, "Unexpected error")
+                var detail = ApiClientUtils.sanitizeErrorForUser(responseCode, errorBody, "Unexpected error (HTTP $responseCode)")
+                // Mirror the OpenAI-compatible client: normalize an unknown/inaccessible model
+                // onto the existing translated "model not found" string instead of raw English.
+                val providerCode = ApiClientUtils.extractApiErrorCode(errorBody)
+                if (responseCode == 404 || providerCode == "model_not_found") {
+                    detail = "Model not found. $detail"
+                }
                 val apiError = if (responseCode in 500..599) ApiError.ServerError(detail) else ApiError.Other(detail)
                 Result.failure(ApiException(apiError, detail))
             }

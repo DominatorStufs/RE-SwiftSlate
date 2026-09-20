@@ -20,29 +20,44 @@ class StatsManager(context: Context) {
     private fun today(): String = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(System.currentTimeMillis())
     private fun currentMonth(): String = SimpleDateFormat("yyyy-MM", Locale.US).format(System.currentTimeMillis())
 
+    /** Parses a stored JSON object, resetting to empty on corruption instead of crashing. */
+    private fun readJsonObject(key: String): JSONObject =
+        try { JSONObject(prefs.getString(key, "{}") ?: "{}") } catch (_: Exception) { JSONObject() }
+
+    /**
+     * Typed prefs reads can throw ClassCastException when a key was ever written with a
+     * different type (corruption, backup/restore). This manager is read on the accessibility
+     * service's bind path and from the Dashboard — an escape there kills the whole process.
+     */
+    private fun safeInt(key: String, def: Int): Int =
+        try { prefs.getInt(key, def) } catch (_: Exception) { def }
+
+    private fun safeString(key: String, def: String?): String? =
+        try { prefs.getString(key, def) } catch (_: Exception) { def }
+
     /** Call after a command is successfully processed. */
     @Synchronized
     fun recordUsage(commandName: String) {
         val editor = prefs.edit()
 
         // Total
-        val total = prefs.getInt(KEY_TOTAL, 0) + 1
+        val total = safeInt(KEY_TOTAL, 0) + 1
         editor.putInt(KEY_TOTAL, total)
 
         // Monthly — reset on rollover
-        val storedMonth = prefs.getString(KEY_MONTH, null)
+        val storedMonth = safeString(KEY_MONTH, null)
         val month = currentMonth()
-        val monthly = if (storedMonth == month) prefs.getInt(KEY_MONTHLY, 0) + 1 else 1
+        val monthly = if (storedMonth == month) safeInt(KEY_MONTHLY, 0) + 1 else 1
         editor.putString(KEY_MONTH, month)
         editor.putInt(KEY_MONTHLY, monthly)
 
         // Per-command counts
-        val cmdJson = JSONObject(prefs.getString(KEY_COMMAND_COUNTS, "{}") ?: "{}")
+        val cmdJson = readJsonObject(KEY_COMMAND_COUNTS)
         cmdJson.put(commandName, cmdJson.optInt(commandName, 0) + 1)
         editor.putString(KEY_COMMAND_COUNTS, cmdJson.toString())
 
         // Daily counts — keep last 7 days
-        val dailyJson = JSONObject(prefs.getString(KEY_DAILY_COUNTS, "{}") ?: "{}")
+        val dailyJson = readJsonObject(KEY_DAILY_COUNTS)
         val day = today()
         dailyJson.put(day, dailyJson.optInt(day, 0) + 1)
         // Prune old entries
@@ -55,18 +70,18 @@ class StatsManager(context: Context) {
         editor.apply()
     }
 
-    val totalRequests: Int get() = prefs.getInt(KEY_TOTAL, 0)
+    val totalRequests: Int get() = safeInt(KEY_TOTAL, 0)
 
     val monthlyRequests: Int
         get() {
-            if (prefs.getString(KEY_MONTH, null) != currentMonth()) return 0
-            return prefs.getInt(KEY_MONTHLY, 0)
+            if (safeString(KEY_MONTH, null) != currentMonth()) return 0
+            return safeInt(KEY_MONTHLY, 0)
         }
 
     /** Returns the command name with the highest usage, or null. */
     val favoriteCommand: String?
         get() {
-            val json = JSONObject(prefs.getString(KEY_COMMAND_COUNTS, "{}") ?: "{}")
+            val json = readJsonObject(KEY_COMMAND_COUNTS)
             var best: String? = null
             var bestCount = 0
             json.keys().forEach { key ->
@@ -78,7 +93,7 @@ class StatsManager(context: Context) {
 
     /** Returns daily counts for the last 7 days, ordered oldest-first. Missing days are 0. */
     fun dailyCounts(): List<Pair<String, Int>> {
-        val json = JSONObject(prefs.getString(KEY_DAILY_COUNTS, "{}") ?: "{}")
+        val json = readJsonObject(KEY_DAILY_COUNTS)
         val dayFmt = SimpleDateFormat("yyyy-MM-dd", Locale.US)
         val cal = java.util.Calendar.getInstance()
         val result = mutableListOf<Pair<String, Int>>()
