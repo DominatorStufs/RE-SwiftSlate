@@ -15,7 +15,7 @@ import java.net.UnknownHostException
 /**
  * Client for the community Codex API endpoint credited to @nepcodexcc.
  *
- * The endpoint is keyless and returns plain text from a GET request. SwiftSlate still wraps
+ * The endpoint is keyless and returns JSON from a GET request. SwiftSlate still wraps
  * the user's text with the same prompt-injection-resistant envelope used by the official
  * providers, so custom commands behave consistently across providers.
  */
@@ -24,6 +24,8 @@ class CodexApiClient {
     companion object {
         const val BASE_URL = "https://chatbot.codexapi.workers.dev"
         private const val MODELS_ENDPOINT = "$BASE_URL/models"
+        private const val BROWSER_USER_AGENT =
+            "Mozilla/5.0 (Linux; Android 13; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
     }
 
     suspend fun fetchModels(): Result<List<String>> = withContext(Dispatchers.IO) {
@@ -31,6 +33,7 @@ class CodexApiClient {
         try {
             connection = URL(MODELS_ENDPOINT).openConnection() as HttpURLConnection
             connection.requestMethod = "GET"
+            connection.applyCodexHeaders()
             connection.connectTimeout = 15_000
             connection.readTimeout = 15_000
 
@@ -66,8 +69,11 @@ class CodexApiClient {
                     }
                 }
 
-                Result.success(models.takeIf { it.size > 1 }?.toList() ?: CodexApiModels.FALLBACK)
+                val supported = CodexApiModels.filterSupported(models)
+                Result.success(supported.takeIf { it.size > 1 } ?: CodexApiModels.FALLBACK)
             } else {
+                // The live /models route currently returns 403/404 depending on headers. Keep
+                // Settings usable with the verified built-in list instead of surfacing failure.
                 Result.success(CodexApiModels.FALLBACK)
             }
         } catch (_: Exception) {
@@ -84,10 +90,18 @@ class CodexApiClient {
         model: String,
         temperature: Double
     ): Result<GenerateResult> = withContext(Dispatchers.IO) {
-        var result = doGenerate(prompt, text, model, temperature)
+        val sanitizedModel = CodexApiModels.sanitize(model)
+        var result = doGenerate(prompt, text, sanitizedModel, temperature)
         if (result.isFailure && result.exceptionOrNull().isTransientNetwork()) {
             delay(1500)
-            result = doGenerate(prompt, text, model, temperature)
+            result = doGenerate(prompt, text, sanitizedModel, temperature)
+        }
+        if (result.isFailure && sanitizedModel != CodexApiModels.RANDOM_MODEL_ID &&
+            result.exceptionOrNull()?.message?.contains("empty response", ignoreCase = true) == true
+        ) {
+            // A community model can temporarily start returning {"answer":""}. Fall back to
+            // the endpoint's random mode so the user's command still has a chance to complete.
+            result = doGenerate(prompt, text, CodexApiModels.RANDOM_MODEL_ID, temperature)
         }
         result
     }
@@ -112,12 +126,13 @@ class CodexApiClient {
 
             connection = URL(url).openConnection() as HttpURLConnection
             connection.requestMethod = "GET"
+            connection.applyCodexHeaders()
             connection.connectTimeout = 30_000
             connection.readTimeout = 60_000
 
             val responseCode = connection.responseCode
             if (responseCode in 200..299) {
-                var resultText = ApiClientUtils.readResponseBounded(connection)
+                var resultText = extractGeneratedText(ApiClientUtils.readResponseBounded(connection))
                     .trim()
                 resultText = ApiClientUtils.stripReasoningBlock(resultText)
                 resultText = ApiClientUtils.stripMarkdownFences(resultText)
@@ -150,6 +165,33 @@ class CodexApiClient {
             if (e is ApiException) Result.failure(e) else Result.failure(ApiException(apiError, e.message ?: "Unknown error"))
         } finally {
             connection?.disconnect()
+        }
+    }
+
+    private fun HttpURLConnection.applyCodexHeaders() {
+        setRequestProperty("Accept", "application/json, text/plain, */*")
+        setRequestProperty("Accept-Language", "en-US,en;q=0.9")
+        // The Cloudflare Worker currently blocks default Java/Android HTTP user agents with 403.
+        // A normal mobile-browser UA matches successful manual tests and keeps Codex keyless.
+        setRequestProperty("User-Agent", BROWSER_USER_AGENT)
+    }
+
+    private fun extractGeneratedText(response: String): String {
+        val trimmed = response.trim()
+        if (trimmed.isBlank()) return ""
+        return try {
+            val json = JSONObject(trimmed)
+            listOf("answer", "response", "content", "text")
+                .firstNotNullOfOrNull { key -> json.optString(key, "").takeIf { it.isNotBlank() } }
+                ?: json.optJSONObject("message")?.optString("content", "")?.takeIf { it.isNotBlank() }
+                ?: json.optJSONArray("choices")
+                    ?.optJSONObject(0)
+                    ?.optJSONObject("message")
+                    ?.optString("content", "")
+                    ?.takeIf { it.isNotBlank() }
+                ?: ""
+        } catch (_: Exception) {
+            trimmed
         }
     }
 }

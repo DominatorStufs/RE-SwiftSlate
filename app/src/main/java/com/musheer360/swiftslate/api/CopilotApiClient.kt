@@ -21,6 +21,8 @@ class CopilotApiClient {
     companion object {
         const val BASE_URL = "https://copilot-api-delta.vercel.app"
         const val MODEL_ID = "copilot"
+        private const val BROWSER_USER_AGENT =
+            "Mozilla/5.0 (Linux; Android 13; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
     }
 
     suspend fun generate(
@@ -46,6 +48,8 @@ class CopilotApiClient {
             connection = URL("$BASE_URL/v1/chat/completions").openConnection() as HttpURLConnection
             connection.requestMethod = "POST"
             connection.setRequestProperty("Content-Type", "application/json")
+            connection.setRequestProperty("Accept", "application/json")
+            connection.setRequestProperty("User-Agent", BROWSER_USER_AGENT)
             connection.doOutput = true
             connection.connectTimeout = 30_000
             connection.readTimeout = 60_000

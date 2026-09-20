@@ -35,12 +35,21 @@ class CommandManager(context: Context) {
     // Typed prefs reads can throw ClassCastException on a corrupted store; this runs on the
     // accessibility service's bind path, where an escape would kill the whole process (#125).
     private var aiCommandsSeeded =
-        try { prefs.getBoolean("ai_commands_seeded", false) } catch (_: Exception) { false }
+        try { prefs.getBoolean(PREF_AI_COMMANDS_SEEDED, false) } catch (_: Exception) { false }
+    private var aiCommandsSeedVersion =
+        try {
+            prefs.getInt(PREF_AI_COMMANDS_SEED_VERSION, if (aiCommandsSeeded) 1 else 0)
+        } catch (_: Exception) {
+            if (aiCommandsSeeded) 1 else 0
+        }
 
     companion object {
         const val DEFAULT_PREFIX = "?"
         const val PREF_TRIGGER_PREFIX = "trigger_prefix"
         private const val CACHE_TTL_MS = 5_000L
+        private const val PREF_AI_COMMANDS_SEEDED = "ai_commands_seeded"
+        private const val PREF_AI_COMMANDS_SEED_VERSION = "ai_commands_seed_version"
+        private const val AI_COMMANDS_SEED_VERSION = 2
 
         /** Limits enforced on every write path — see [isValidCommand] / [importCommands]. */
         const val MAX_TRIGGER_LENGTH = 50
@@ -68,17 +77,20 @@ class CommandManager(context: Context) {
         "translate:xx" to "Translate text to any language code (e.g. ?translate:es, ?translate:fr)."
     )
 
-    // Default AI commands — seeded into custom commands on first run so users can edit/delete them
+    // Default AI commands — seeded into custom commands on first run so users can edit/delete them.
+    // The version lets upgrades add genuinely new defaults (like ?flirt) without resurrecting
+    // older defaults that a user intentionally deleted.
     private val defaultAiDefinitions = listOf(
-        "fix" to "Fix grammar, spelling, and punctuation errors.",
-        "improve" to "Rewrite to improve clarity, flow, and coherence.",
-        "shorten" to "Rewrite to be more concise while preserving the core meaning.",
-        "expand" to "Rewrite with more detail. Elaborate only on what is stated or widely known \u2014 do not fabricate information.",
-        "formal" to "Rewrite in a formal, professional tone.",
-        "casual" to "Rewrite in a casual, friendly tone.",
-        "emoji" to "Add relevant emojis throughout.",
-        "human" to "Rewrite to sound naturally human, not AI-generated. Never use emdashes or semicolons, use commas or periods instead. Drop AI clichés and filler phrases. Use contractions, everyday words, and varied sentence lengths. Keep all facts, names, and numbers intact.",
-        "reply" to "Generate a contextual reply to this message."
+        Triple("fix", "Fix grammar, spelling, and punctuation errors.", 1),
+        Triple("improve", "Rewrite to improve clarity, flow, and coherence.", 1),
+        Triple("shorten", "Rewrite to be more concise while preserving the core meaning.", 1),
+        Triple("expand", "Rewrite with more detail. Elaborate only on what is stated or widely known \u2014 do not fabricate information.", 1),
+        Triple("formal", "Rewrite in a formal, professional tone.", 1),
+        Triple("casual", "Rewrite in a casual, friendly tone.", 1),
+        Triple("emoji", "Add relevant emojis throughout.", 1),
+        Triple("human", "Rewrite to sound naturally human, not AI-generated. Never use emdashes or semicolons, use commas or periods instead. Drop AI clichés and filler phrases. Use contractions, everyday words, and varied sentence lengths. Keep all facts, names, and numbers intact.", 1),
+        Triple("reply", "Generate a contextual reply to this message.", 1),
+        Triple("flirt", "Rewrite the input into a cute, playful, and respectful flirty tone. Keep the same meaning and context. If the input is in Hinglish, reply in natural Hinglish. If the input is in English, reply in natural English. Do not make it vulgar, creepy, or over-romantic. Make it smooth, charming, and casual. Add exactly 2 relevant emojis based on the response. Return only the rewritten text.", 2)
     )
 
     /** Drops the cache and its validity key so the next [getCommands] rebuilds from prefs. */
@@ -136,13 +148,17 @@ class CommandManager(context: Context) {
 
     private fun seedDefaultAiCommands() {
         val prefix = getTriggerPrefix()
+        val previousSeedVersion = if (aiCommandsSeeded) aiCommandsSeedVersion.coerceAtLeast(1) else 0
         val customStr = prefs.getString("custom_commands", "[]") ?: "[]"
         val arr = try { JSONArray(customStr) } catch (_: Exception) { JSONArray() }
         val existingTriggers = (0 until arr.length())
             .mapNotNull { arr.optJSONObject(it)?.optString("trigger")?.takeIf { t -> t.isNotEmpty() } }
             .toSet()
         var added = false
-        for ((name, prompt) in defaultAiDefinitions) {
+        for ((name, prompt, introducedInVersion) in defaultAiDefinitions) {
+            // Fresh installs receive every default. Existing installs receive only defaults added
+            // after their stored seed version, preserving older commands they chose to delete.
+            if (previousSeedVersion > 0 && introducedInVersion <= previousSeedVersion) continue
             val trigger = "$prefix$name"
             if (trigger !in existingTriggers) {
                 val obj = JSONObject()
@@ -158,15 +174,19 @@ class CommandManager(context: Context) {
             editor.putString("custom_commands", arr.toString())
             invalidateCache()
         }
-        editor.putBoolean("ai_commands_seeded", true).apply()
+        editor
+            .putBoolean(PREF_AI_COMMANDS_SEEDED, true)
+            .putInt(PREF_AI_COMMANDS_SEED_VERSION, AI_COMMANDS_SEED_VERSION)
+            .apply()
         aiCommandsSeeded = true
+        aiCommandsSeedVersion = AI_COMMANDS_SEED_VERSION
     }
 
     @Volatile
     private var migrating = false
 
     @Synchronized fun getCommands(): List<Command> {
-        if (!aiCommandsSeeded) {
+        if (!aiCommandsSeeded || aiCommandsSeedVersion < AI_COMMANDS_SEED_VERSION) {
             seedDefaultAiCommands()
         }
         val now = System.currentTimeMillis()

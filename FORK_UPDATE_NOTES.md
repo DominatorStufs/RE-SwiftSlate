@@ -1,12 +1,13 @@
-# RE-SwiftSlate updated package
+# RE-SwiftSlate fork update notes
 
-This package keeps Codex API and Unofficial Copilot API on top of the refreshed SwiftSlate code.
+This codebase was refreshed from the latest upstream SwiftSlate source and keeps the fork's extra keyless AI providers:
 
-Debug/fix notes included in this ZIP:
+- Codex API (`https://chatbot.codexapi.workers.dev`) with random/chosen model support.
+- Unofficial Copilot API (`https://copilot-api-delta.vercel.app/v1/chat/completions`) with fixed `copilot` model.
 
-- Fixed Android lint MissingTranslation errors for fork-only keyless-provider strings.
-- Replaced the upstream release/signing-heavy GitHub Actions workflow with a fork-friendly `Build APK` workflow.
-- The workflow now runs lint, unit tests, and builds a debug APK artifact without keystore secrets, tags, releases, or failure-issue creation.
-- Removed the obsolete `Comment Preview APK` workflow so manually running the wrong workflow cannot fail the repo status.
+Credit for both community endpoints: @nepcodexcc.
 
-After uploading, open Actions → Build APK. The APK will be in the `Build APK` job artifacts.
+Validation performed in this workspace:
+
+- `./gradlew :app:compileDebugKotlin` completed successfully after installing a temporary JDK/Android SDK in the sandbox.
+- `./gradlew :app:testDebugUnitTest` reached test execution, but the Gradle daemon disappeared before the test report was written in this sandbox. Main and test Kotlin compilation had already completed.

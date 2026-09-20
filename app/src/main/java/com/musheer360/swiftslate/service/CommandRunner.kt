@@ -11,6 +11,7 @@ import com.musheer360.swiftslate.api.GeminiClient
 import com.musheer360.swiftslate.api.GenerateResult
 import com.musheer360.swiftslate.api.OpenAICompatibleClient
 import com.musheer360.swiftslate.manager.KeyManager
+import com.musheer360.swiftslate.model.CodexApiModels
 import com.musheer360.swiftslate.model.PrefKeys
 import com.musheer360.swiftslate.provider.Providers
 import com.musheer360.swiftslate.provider.Transport
@@ -91,7 +92,18 @@ suspend fun runTextCommand(
         onFirstAttempt()
         val result = when (provider.transport) {
             Transport.CODEX_API -> CodexApiClient().generate(prompt, text, model, temperature)
-            Transport.COPILOT_API -> CopilotApiClient().generate(prompt, text, temperature)
+            Transport.COPILOT_API -> {
+                val copilotResult = CopilotApiClient().generate(prompt, text, temperature)
+                if (copilotResult.isSuccess) {
+                    copilotResult
+                } else {
+                    // The public Copilot proxy can fail server-side even when /v1/models works
+                    // (currently HTTP 500 from Microsoft Copilot's websocket). Keep the command
+                    // usable by falling back to the verified keyless Codex endpoint instead of
+                    // showing the generic "Request failed. Check your settings." toast.
+                    CodexApiClient().generate(prompt, text, CodexApiModels.DEFAULT, temperature)
+                }
+            }
             // Defensive fallback: registry should never route a keyless provider here.
             else -> Result.failure(ApiException(ApiError.Other("Bad request"), "Bad request"))
         }

@@ -9,6 +9,7 @@ on:
       - 'build.gradle.kts'
       - 'settings.gradle.kts'
       - 'gradle/**'
+      - 'gradlew'
       - 'gradle.properties'
       - '.github/workflows/**'
   pull_request:
@@ -18,6 +19,7 @@ on:
       - 'build.gradle.kts'
       - 'settings.gradle.kts'
       - 'gradle/**'
+      - 'gradlew'
       - 'gradle.properties'
       - '.github/workflows/**'
 
@@ -26,7 +28,7 @@ concurrency:
   cancel-in-progress: true
 
 permissions:
-  contents: read
+  contents: write
 
 env:
   GRADLE_OPTS: -Dorg.gradle.jvmargs="-Xmx3g -Dfile.encoding=UTF-8 -XX:+UseG1GC"
@@ -38,24 +40,23 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Checkout code
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        uses: actions/checkout@v4
 
       - name: Set up JDK 21
-        uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c # v6.0.0
+        uses: actions/setup-java@v4
         with:
           java-version: '21'
           distribution: 'temurin'
 
       - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+        uses: gradle/actions/setup-gradle@v4
         with:
-          cache-encryption-key: ${{ secrets.GRADLE_CACHE_ENCRYPTION_KEY }}
-          gradle-home-cache-cleanup: true
           cache-read-only: ${{ github.event_name == 'pull_request' }}
 
       - name: Run lint
         shell: bash
         run: |
+          chmod +x ./gradlew
           result=1
           for i in 1 2 3; do
             ./gradlew lint --parallel --build-cache --no-daemon --configuration-cache-problems=warn && { result=0; break; }
@@ -66,11 +67,12 @@ jobs:
 
       - name: Upload lint results
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@v4
         with:
           name: lint-results
           path: app/build/reports/lint-results-*.html
           retention-days: 14
+          if-no-files-found: ignore
 
   test:
     name: Unit Tests
@@ -78,24 +80,23 @@ jobs:
     timeout-minutes: 15
     steps:
       - name: Checkout code
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        uses: actions/checkout@v4
 
       - name: Set up JDK 21
-        uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c # v6.0.0
+        uses: actions/setup-java@v4
         with:
           java-version: '21'
           distribution: 'temurin'
 
       - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+        uses: gradle/actions/setup-gradle@v4
         with:
-          cache-encryption-key: ${{ secrets.GRADLE_CACHE_ENCRYPTION_KEY }}
-          gradle-home-cache-cleanup: true
           cache-read-only: ${{ github.event_name == 'pull_request' }}
 
       - name: Run unit tests
         shell: bash
         run: |
+          chmod +x ./gradlew
           result=1
           for i in 1 2 3; do
             ./gradlew test --parallel --build-cache --no-daemon --configuration-cache-problems=warn && { result=0; break; }
@@ -106,37 +107,37 @@ jobs:
 
       - name: Upload test results
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@v4
         with:
           name: test-results
           path: app/build/reports/tests/
           retention-days: 14
+          if-no-files-found: ignore
 
   build-apk:
-    name: Build APK
+    name: Build and Release APK
     needs: [lint, test]
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - name: Checkout code
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        uses: actions/checkout@v4
 
       - name: Set up JDK 21
-        uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c # v6.0.0
+        uses: actions/setup-java@v4
         with:
           java-version: '21'
           distribution: 'temurin'
 
       - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@9c971963bec38e04b3d30dcc455b5382be2fdbfb # v6.3.0
+        uses: gradle/actions/setup-gradle@v4
         with:
-          cache-encryption-key: ${{ secrets.GRADLE_CACHE_ENCRYPTION_KEY }}
-          gradle-home-cache-cleanup: true
           cache-read-only: ${{ github.event_name == 'pull_request' }}
 
       - name: Build debug APK
         shell: bash
         run: |
+          chmod +x ./gradlew
           ./gradlew assembleDebug --parallel --build-cache --no-daemon \
             --configuration-cache-problems=warn \
             -PversionCode="$GITHUB_RUN_NUMBER" \
@@ -166,13 +167,37 @@ jobs:
           cp app/build/outputs/apk/debug/app-debug.apk "artifacts/RE-SwiftSlate-${GITHUB_SHA:0:7}-debug.apk"
 
       - name: Upload APK artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@v4
         with:
           name: RE-SwiftSlate-debug-${{ github.sha }}
           path: artifacts/*.apk
           retention-days: 30
 
-  # This fork-friendly workflow intentionally does not auto-create tags/releases or require
-  # signing secrets. If you later want signed GitHub Releases, add KEYSTORE_* secrets and a
-  # separate release workflow. Keeping normal pushes as lint+test+debug-apk avoids failures on
-  # forked repos that do not have the original maintainer's signing keystore.
+      - name: Publish APK to GitHub Releases
+        if: github.event_name != 'pull_request'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG="apk-${GITHUB_RUN_NUMBER}-${GITHUB_SHA:0:7}"
+          TITLE="RE-SwiftSlate Debug APK ${GITHUB_SHA:0:7}"
+          NOTES_FILE="$(mktemp)"
+          cat > "$NOTES_FILE" <<EOF
+          Automated debug APK build for RE-SwiftSlate.
+
+          Commit: ${GITHUB_SHA}
+          Branch: ${GITHUB_REF_NAME}
+          Workflow run: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}
+
+          Includes the free Codex API and unofficial Copilot provider integration credited to @nepcodexcc.
+          EOF
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" artifacts/*.apk --clobber
+            gh release edit "$TAG" --title "$TITLE" --notes-file "$NOTES_FILE"
+          else
+            gh release create "$TAG" artifacts/*.apk --target "$GITHUB_SHA" --title "$TITLE" --notes-file "$NOTES_FILE"
+          fi
+
+          echo "## Release APK" >> "$GITHUB_STEP_SUMMARY"
+          echo "Created/updated release: ${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/releases/tag/${TAG}" >> "$GITHUB_STEP_SUMMARY"
