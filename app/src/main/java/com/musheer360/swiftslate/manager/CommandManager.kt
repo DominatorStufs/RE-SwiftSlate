@@ -49,7 +49,7 @@ class CommandManager(context: Context) {
         private const val CACHE_TTL_MS = 5_000L
         private const val PREF_AI_COMMANDS_SEEDED = "ai_commands_seeded"
         private const val PREF_AI_COMMANDS_SEED_VERSION = "ai_commands_seed_version"
-        private const val AI_COMMANDS_SEED_VERSION = 2
+        private const val AI_COMMANDS_SEED_VERSION = 3
 
         /** Limits enforced on every write path — see [isValidCommand] / [importCommands]. */
         const val MAX_TRIGGER_LENGTH = 50
@@ -77,6 +77,9 @@ class CommandManager(context: Context) {
         "translate:xx" to "Translate text to any language code (e.g. ?translate:es, ?translate:fr)."
     )
 
+    private val legacyFlirtPrompt = "Rewrite the input into a cute, playful, and respectful flirty tone. Keep the same meaning and context. If the input is in Hinglish, reply in natural Hinglish. If the input is in English, reply in natural English. Do not make it vulgar, creepy, or over-romantic. Make it smooth, charming, and casual. Add exactly 2 relevant emojis based on the response. Return only the rewritten text."
+    private val flirtPrompt = """Rewrite the input as an outgoing message from the user to the person they are texting, in a cute, playful, respectful flirty tone. Do not answer the message as if you are the other person, and do not write from the assistant point of view. Preserve the speaker and meaning: if the user writes "I miss you", output a better flirty version of the user saying they miss the other person; do not say "I miss you too", "you caught me blushing", or anything that sounds like the recipient replying unless the original input clearly says that. If the input is Hinglish, output natural Hinglish. If the input is English, output natural English. Make it sound like a real human WhatsApp/message, not AI-written: casual, simple, smooth, and natural. Avoid cringe, vulgar, creepy, overly poetic, or over-romantic lines. Add exactly 2 relevant emojis, no more and no less. Return only the rewritten message."""
+
     // Default AI commands — seeded into custom commands on first run so users can edit/delete them.
     // The version lets upgrades add genuinely new defaults (like ?flirt) without resurrecting
     // older defaults that a user intentionally deleted.
@@ -90,7 +93,7 @@ class CommandManager(context: Context) {
         Triple("emoji", "Add relevant emojis throughout.", 1),
         Triple("human", "Rewrite to sound naturally human, not AI-generated. Never use emdashes or semicolons, use commas or periods instead. Drop AI clichés and filler phrases. Use contractions, everyday words, and varied sentence lengths. Keep all facts, names, and numbers intact.", 1),
         Triple("reply", "Generate a contextual reply to this message.", 1),
-        Triple("flirt", "Rewrite the input into a cute, playful, and respectful flirty tone. Keep the same meaning and context. If the input is in Hinglish, reply in natural Hinglish. If the input is in English, reply in natural English. Do not make it vulgar, creepy, or over-romantic. Make it smooth, charming, and casual. Add exactly 2 relevant emojis based on the response. Return only the rewritten text.", 2)
+        Triple("flirt", flirtPrompt, 2)
     )
 
     /** Drops the cache and its validity key so the next [getCommands] rebuilds from prefs. */
@@ -154,6 +157,17 @@ class CommandManager(context: Context) {
         val existingTriggers = (0 until arr.length())
             .mapNotNull { arr.optJSONObject(it)?.optString("trigger")?.takeIf { t -> t.isNotEmpty() } }
             .toSet()
+        var changed = false
+        if (previousSeedVersion in 1 until AI_COMMANDS_SEED_VERSION) {
+            val flirtTrigger = prefix + "flirt"
+            for (i in 0 until arr.length()) {
+                val obj = arr.optJSONObject(i) ?: continue
+                if (obj.optString("trigger") == flirtTrigger && obj.optString("prompt") == legacyFlirtPrompt) {
+                    obj.put("prompt", flirtPrompt)
+                    changed = true
+                }
+            }
+        }
         var added = false
         for ((name, prompt, introducedInVersion) in defaultAiDefinitions) {
             // Fresh installs receive every default. Existing installs receive only defaults added
@@ -170,7 +184,7 @@ class CommandManager(context: Context) {
             }
         }
         val editor = prefs.edit()
-        if (added) {
+        if (added || changed) {
             editor.putString("custom_commands", arr.toString())
             invalidateCache()
         }

@@ -2,6 +2,7 @@ package com.musheer360.swiftslate.ui
 
 import android.accessibilityservice.AccessibilityServiceInfo
 import android.annotation.SuppressLint
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.provider.Settings
@@ -29,6 +30,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.repeatOnLifecycle
 import com.musheer360.swiftslate.R
 import com.musheer360.swiftslate.SwiftSlateApp
+import com.musheer360.swiftslate.service.AssistantService
 import com.musheer360.swiftslate.manager.CommandManager
 import com.musheer360.swiftslate.manager.KeyManager
 import com.musheer360.swiftslate.manager.StatsManager
@@ -44,10 +46,35 @@ import java.text.SimpleDateFormat
 import java.util.Locale
 
 private fun checkServiceEnabled(context: Context): Boolean {
-    val am = context.getSystemService(Context.ACCESSIBILITY_SERVICE) as AccessibilityManager
-    val enabledServices = am.getEnabledAccessibilityServiceList(AccessibilityServiceInfo.FEEDBACK_GENERIC)
-    return enabledServices.any {
-        it.resolveInfo.serviceInfo.packageName == context.packageName
+    val expected = ComponentName(context, AssistantService::class.java)
+
+    // Source of truth: Android stores enabled accessibility services in a colon-separated
+    // Settings.Secure value. Some ROMs return an empty filtered AccessibilityManager list after
+    // the app process is relaunched even though the service is still enabled; parsing the secure
+    // setting keeps the Dashboard in sync with the system toggle.
+    try {
+        val enabledSetting = Settings.Secure.getString(
+            context.contentResolver,
+            Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
+        )
+        enabledSetting
+            ?.split(':')
+            ?.mapNotNull { ComponentName.unflattenFromString(it) }
+            ?.any { it.packageName == expected.packageName && it.className == expected.className }
+            ?.let { if (it) return true }
+    } catch (_: Exception) {
+    }
+
+    // Fallback for platforms where the secure setting read is unavailable.
+    return try {
+        val am = context.getSystemService(Context.ACCESSIBILITY_SERVICE) as AccessibilityManager
+        val enabledServices = am.getEnabledAccessibilityServiceList(AccessibilityServiceInfo.FEEDBACK_ALL_MASK)
+        enabledServices.any {
+            val serviceInfo = it.resolveInfo.serviceInfo
+            serviceInfo.packageName == expected.packageName && serviceInfo.name == expected.className
+        }
+    } catch (_: Exception) {
+        false
     }
 }
 
@@ -65,7 +92,10 @@ private fun isServiceCrashed(context: Context): Boolean {
         val field = AccessibilityServiceInfo::class.java.getDeclaredField("crashed")
         am.getInstalledAccessibilityServiceList().any {
             try {
-                it.resolveInfo.serviceInfo.packageName == context.packageName && field.getBoolean(it)
+                val serviceInfo = it.resolveInfo.serviceInfo
+                serviceInfo.packageName == context.packageName &&
+                    serviceInfo.name == AssistantService::class.java.name &&
+                    field.getBoolean(it)
             } catch (_: Exception) {
                 false
             }
