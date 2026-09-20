@@ -1,5 +1,6 @@
 package com.musheer360.swiftslate.provider
 
+import com.musheer360.swiftslate.model.CodexApiModels
 import com.musheer360.swiftslate.model.GeminiModels
 import com.musheer360.swiftslate.model.GroqModels
 import com.musheer360.swiftslate.model.PrefKeys
@@ -10,8 +11,10 @@ import com.musheer360.swiftslate.model.ProviderType
  * - [GEMINI_NATIVE]: Gemini's own API format (GeminiClient).
  * - [OPENAI_COMPAT]: OpenAI-compatible chat completions (OpenAICompatibleClient),
  *   shared by Groq and Custom.
+ * - [CODEX_API]: keyless community Codex API GET endpoint.
+ * - [COPILOT_API]: keyless community Copilot chat-completions endpoint.
  */
-enum class Transport { GEMINI_NATIVE, OPENAI_COMPAT }
+enum class Transport { GEMINI_NATIVE, OPENAI_COMPAT, CODEX_API, COPILOT_API }
 
 /**
  * Per-provider configuration: everything the request pipeline needs to know
@@ -29,6 +32,9 @@ interface ProviderConfig {
 
     /** Which client transport to use. */
     val transport: Transport
+
+    /** Whether this provider needs a stored API key before a request can run. */
+    val requiresApiKey: Boolean get() = true
 
     /** SharedPreferences key holding this provider's selected model. */
     val modelPrefKey: String
@@ -92,6 +98,33 @@ object GroqConfig : ProviderConfig {
     override fun useJsonObjectMode(structuredOutputEnabled: Boolean): Boolean = structuredOutputEnabled
 }
 
+/** Codex API — keyless community endpoint, optional/random model selection. */
+object CodexApiConfig : ProviderConfig {
+    const val ENDPOINT = "https://chatbot.codexapi.workers.dev"
+
+    override val type = ProviderType.CODEX_API
+    override val transport = Transport.CODEX_API
+    override val requiresApiKey = false
+    override val modelPrefKey = PrefKeys.CODEX_API_MODEL
+    override val defaultModel = CodexApiModels.DEFAULT
+    override fun sanitizeModel(stored: String?): String = CodexApiModels.sanitize(stored)
+    override fun resolveEndpoint(customEndpoint: String): String = ENDPOINT
+}
+
+/** Unofficial Copilot API — keyless OpenAI-shaped community endpoint. */
+object CopilotConfig : ProviderConfig {
+    const val ENDPOINT = "https://copilot-api-delta.vercel.app"
+    const val MODEL = "copilot"
+
+    override val type = ProviderType.COPILOT
+    override val transport = Transport.COPILOT_API
+    override val requiresApiKey = false
+    override val modelPrefKey = PrefKeys.COPILOT_MODEL
+    override val defaultModel = MODEL
+    override fun sanitizeModel(stored: String?): String = MODEL
+    override fun resolveEndpoint(customEndpoint: String): String = ENDPOINT
+}
+
 /** Custom OpenAI-compatible endpoint — user-supplied endpoint and model. */
 object CustomConfig : ProviderConfig {
     override val type = ProviderType.CUSTOM
@@ -108,6 +141,8 @@ object CustomConfig : ProviderConfig {
 object Providers {
     fun forType(type: String?): ProviderConfig = when (ProviderType.sanitize(type)) {
         ProviderType.GROQ -> GroqConfig
+        ProviderType.CODEX_API -> CodexApiConfig
+        ProviderType.COPILOT -> CopilotConfig
         ProviderType.CUSTOM -> CustomConfig
         else -> GeminiConfig
     }

@@ -10,7 +10,7 @@ package com.musheer360.swiftslate.model
  * stored preferences continue to resolve identically.
  */
 object PrefKeys {
-    /** Active provider ("gemini" | "groq" | "custom") — see [ProviderType]. */
+    /** Active provider ("gemini" | "groq" | "codex_api" | "copilot" | "custom") — see [ProviderType]. */
     const val PROVIDER_TYPE = "provider_type"
 
     /** Selected Gemini model id. */
@@ -18,6 +18,12 @@ object PrefKeys {
 
     /** Selected Groq model id. */
     const val GROQ_MODEL = "groq_model"
+
+    /** Selected Codex API model id, or CodexApiModels.RANDOM_MODEL_ID. */
+    const val CODEX_API_MODEL = "codex_api_model"
+
+    /** Fixed Copilot model id, kept as a pref key for future compatibility. */
+    const val COPILOT_MODEL = "copilot_model"
 
     /** Custom (OpenAI-compatible) model id. */
     const val CUSTOM_MODEL = "custom_model"

@@ -32,6 +32,8 @@ import com.musheer360.swiftslate.SwiftSlateApp
 import com.musheer360.swiftslate.manager.CommandManager
 import com.musheer360.swiftslate.manager.KeyManager
 import com.musheer360.swiftslate.manager.StatsManager
+import com.musheer360.swiftslate.model.PrefKeys
+import com.musheer360.swiftslate.model.ProviderType
 import com.musheer360.swiftslate.ui.components.LocalSlateRhythm
 import com.musheer360.swiftslate.ui.components.ScreenTitle
 import com.musheer360.swiftslate.ui.components.SlateCard
@@ -94,6 +96,8 @@ private fun clearCrashMarker(context: Context) {
 fun DashboardScreen(keyManager: KeyManager, commandManager: CommandManager, statsManager: StatsManager) {
     val context = LocalContext.current
     val haptic = LocalHapticFeedback.current
+    val prefs = remember { context.getSharedPreferences("settings", Context.MODE_PRIVATE) }
+    var providerType by remember { mutableStateOf(ProviderType.sanitize(prefs.getString(PrefKeys.PROVIDER_TYPE, null))) }
     var isServiceEnabled by remember { mutableStateOf(checkServiceEnabled(context)) }
     // Not seeded from keyManager.getKeys(): that decrypts through AndroidKeyStore on the main
     // thread. The LaunchedEffect below fills it in on the IO dispatcher, as it already did on
@@ -122,6 +126,7 @@ fun DashboardScreen(keyManager: KeyManager, commandManager: CommandManager, stat
     LaunchedEffect(lifecycleOwner) {
         val lifecycle = lifecycleOwner.lifecycle
         lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+            providerType = ProviderType.sanitize(prefs.getString(PrefKeys.PROVIDER_TYPE, null))
             val (newEnabled, newKeyCount, killed) = withContext(Dispatchers.IO) {
                 Triple(
                     checkServiceEnabled(context),
@@ -211,7 +216,10 @@ fun DashboardScreen(keyManager: KeyManager, commandManager: CommandManager, stat
             }
             if (keyCount == 0) {
                 Text(
-                    text = stringResource(R.string.dashboard_add_key_hint),
+                    text = stringResource(
+                        if (ProviderType.requiresApiKey(providerType)) R.string.dashboard_add_key_hint
+                        else R.string.dashboard_keyless_provider_hint
+                    ),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     fontSize = rhythm.bodySize,
                     modifier = Modifier.padding(top = rhythm.formGap)

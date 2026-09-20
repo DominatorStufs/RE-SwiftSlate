@@ -5,7 +5,10 @@ import com.musheer360.swiftslate.R
 import com.musheer360.swiftslate.api.ApiClientUtils
 import com.musheer360.swiftslate.api.ApiError
 import com.musheer360.swiftslate.api.ApiException
+import com.musheer360.swiftslate.api.CodexApiClient
+import com.musheer360.swiftslate.api.CopilotApiClient
 import com.musheer360.swiftslate.api.GeminiClient
+import com.musheer360.swiftslate.api.GenerateResult
 import com.musheer360.swiftslate.api.OpenAICompatibleClient
 import com.musheer360.swiftslate.manager.KeyManager
 import com.musheer360.swiftslate.model.PrefKeys
@@ -36,7 +39,8 @@ private const val STRUCTURED_OUTPUT_RETRY_MS = 86_400_000L // re-try structured 
  * on the caller's dispatcher and reads disk (prefs, Keystore), so call it off the main thread.
  *
  * @param onFirstAttempt run just before the first request actually goes out — after it is known
- *   that a usable key exists. The service starts its inline spinner here.
+ *   that a usable key exists, or immediately for keyless providers. The service starts its
+ *   inline spinner here.
  */
 suspend fun runTextCommand(
     context: Context,
@@ -47,14 +51,16 @@ suspend fun runTextCommand(
     text: String,
     onFirstAttempt: () -> Unit = {}
 ): CommandOutcome {
-    // keys_keystore_error rather than a "reinstall" message: the usual cause is the Keystore key
-    // being invalidated by a lock-screen change, where re-adding the keys is enough.
-    if (!keyManager.keystoreAvailable) {
+    val prefs = context.getSharedPreferences("settings", Context.MODE_PRIVATE)
+    val provider = Providers.forType(prefs.getString(PrefKeys.PROVIDER_TYPE, null))
+
+    // Keyless community providers must continue working even if Android Keystore is unavailable,
+    // because they do not read from the encrypted key store at all. Key-required providers still
+    // fail fast with the localized key-store message.
+    if (provider.requiresApiKey && !keyManager.keystoreAvailable) {
         return CommandOutcome.Unavailable(context.getString(R.string.keys_keystore_error))
     }
 
-    val prefs = context.getSharedPreferences("settings", Context.MODE_PRIVATE)
-    val provider = Providers.forType(prefs.getString(PrefKeys.PROVIDER_TYPE, null))
     val model = provider.sanitizeModel(prefs.getString(provider.modelPrefKey, provider.defaultModel))
     val endpoint = provider.resolveEndpoint(prefs.getString(PrefKeys.CUSTOM_ENDPOINT, "") ?: "")
     if (!provider.isConfigured(model, endpoint)) {
@@ -63,6 +69,36 @@ suspend fun runTextCommand(
     val temperature = prefs.getFloat(PrefKeys.TEMPERATURE, DEFAULT_TEMPERATURE).toDouble()
     val useStructuredOutput = System.currentTimeMillis() -
         prefs.getLong(PrefKeys.STRUCTURED_OUTPUT_DISABLED_AT, 0L) > STRUCTURED_OUTPUT_RETRY_MS
+
+    fun successOutcome(generated: GenerateResult): CommandOutcome {
+        if (ApiClientUtils.isModelRefusal(generated.text)) return CommandOutcome.Refusal
+        if (generated.structuredOutputFailed) {
+            prefs.edit()
+                .putLong(PrefKeys.STRUCTURED_OUTPUT_DISABLED_AT, System.currentTimeMillis())
+                .apply()
+        }
+        // Keep the truncation warning localized and shared by both entry points rather than
+        // leaving callers to duplicate it (or clients to inject an English-only string).
+        val outputText = if (generated.truncated) {
+            generated.text + "\n\n" + context.getString(R.string.note_response_truncated)
+        } else {
+            generated.text
+        }
+        return CommandOutcome.Success(outputText)
+    }
+
+    if (!provider.requiresApiKey) {
+        onFirstAttempt()
+        val result = when (provider.transport) {
+            Transport.CODEX_API -> CodexApiClient().generate(prompt, text, model, temperature)
+            Transport.COPILOT_API -> CopilotApiClient().generate(prompt, text, temperature)
+            // Defensive fallback: registry should never route a keyless provider here.
+            else -> Result.failure(ApiException(ApiError.Other("Bad request"), "Bad request"))
+        }
+        result.onSuccess { generated -> return successOutcome(generated) }
+        val raw = result.exceptionOrNull()?.message.orEmpty()
+        return CommandOutcome.Failure(context.getString(ErrorMessages.map(raw)))
+    }
 
     var lastErrorMsg: String? = null
     var lastErrorWasRateLimit = false
@@ -90,24 +126,12 @@ suspend fun runTextCommand(
             Transport.GEMINI_NATIVE -> geminiClient.generate(
                 prompt, text, key, model, temperature, useStructuredOutput,
                 thinkingLevel = provider.thinkingLevel(model))
+            // Keyless transports return above and never enter the key-rotation loop.
+            Transport.CODEX_API, Transport.COPILOT_API ->
+                Result.failure(ApiException(ApiError.Other("Bad request"), "Bad request"))
         }
 
-        result.onSuccess { generated ->
-            if (ApiClientUtils.isModelRefusal(generated.text)) return CommandOutcome.Refusal
-            if (generated.structuredOutputFailed) {
-                prefs.edit()
-                    .putLong(PrefKeys.STRUCTURED_OUTPUT_DISABLED_AT, System.currentTimeMillis())
-                    .apply()
-            }
-            // Keep the truncation warning localized and shared by both entry points rather than
-            // leaving callers to duplicate it (or clients to inject an English-only string).
-            val outputText = if (generated.truncated) {
-                generated.text + "\n\n" + context.getString(R.string.note_response_truncated)
-            } else {
-                generated.text
-            }
-            return CommandOutcome.Success(outputText)
-        }
+        result.onSuccess { generated -> return successOutcome(generated) }
 
         val error = result.exceptionOrNull()
         val msg = error?.message ?: ""

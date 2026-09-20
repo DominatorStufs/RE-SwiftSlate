@@ -30,8 +30,6 @@ import com.musheer360.swiftslate.R
 import com.musheer360.swiftslate.api.ApiClientUtils
 import com.musheer360.swiftslate.api.GeminiClient
 import com.musheer360.swiftslate.api.OpenAICompatibleClient
-import com.musheer360.swiftslate.api.CodexApiClient
-import com.musheer360.swiftslate.api.CopilotApiClient
 import com.musheer360.swiftslate.manager.KeyManager
 import com.musheer360.swiftslate.model.PrefKeys
 import com.musheer360.swiftslate.model.ProviderType
@@ -75,6 +73,12 @@ fun KeysScreen(keyManager: KeyManager, prefs: SharedPreferences) {
     val signinRequiredMsg = stringResource(R.string.error_provider_auth_required)
     val endpointNeedsV1Msg = stringResource(R.string.keys_endpoint_needs_v1)
     val rhythm = LocalSlateRhythm.current
+    val activeProviderType = ProviderType.sanitize(prefs.getString(PrefKeys.PROVIDER_TYPE, null))
+    val keylessProviderName = when (activeProviderType) {
+        ProviderType.CODEX_API -> stringResource(R.string.settings_provider_codex_api)
+        ProviderType.COPILOT -> stringResource(R.string.settings_provider_copilot)
+        else -> null
+    }
 
     Column(
         modifier = Modifier
@@ -84,7 +88,7 @@ fun KeysScreen(keyManager: KeyManager, prefs: SharedPreferences) {
     ) {
         ScreenTitle(stringResource(R.string.keys_title))
 
-        if (!keyManager.keystoreAvailable) {
+        if (!keyManager.keystoreAvailable && keylessProviderName == null) {
             SlateCard {
                 Text(
                     text = keystoreErrorMsg,
@@ -95,8 +99,17 @@ fun KeysScreen(keyManager: KeyManager, prefs: SharedPreferences) {
             Spacer(modifier = Modifier.height(rhythm.cardGap))
         }
 
-        SlateCard {
-            SlateTextField(
+        if (keylessProviderName != null) {
+            SlateCard {
+                Text(
+                    text = stringResource(R.string.keys_keyless_provider_note, keylessProviderName),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    fontSize = rhythm.bodySize
+                )
+            }
+        } else {
+            SlateCard {
+                SlateTextField(
                 value = newKey,
                 onValueChange = { if (it.length <= 256) newKey = it },
                 placeholder = { Text(stringResource(R.string.keys_api_key_label)) },
@@ -188,8 +201,6 @@ fun KeysScreen(keyManager: KeyManager, prefs: SharedPreferences) {
             }
             val (apiKeyUrl, providerName) = when (prefs.getString(PrefKeys.PROVIDER_TYPE, ProviderType.GEMINI) ?: ProviderType.GEMINI) {
                 ProviderType.GROQ -> "https://console.groq.com/keys" to "Groq"
-                ProviderType.CODEX_API -> "https://chatbot.codexapi.workers.dev/docs" to "CodexAPI"
-                ProviderType.COPILOT -> null to null
                 ProviderType.CUSTOM -> null to null
                 else -> "https://aistudio.google.com/api-keys" to "Gemini"
             }
@@ -202,21 +213,8 @@ fun KeysScreen(keyManager: KeyManager, prefs: SharedPreferences) {
                         .clickable(interactionSource = null, indication = null) { uriHandler.openUri(apiKeyUrl) }
                         .padding(top = rhythm.formGap)
                 )
-            } else if (prefs.getString("provider_type", ProviderType.GEMINI) == ProviderType.COPILOT) {
-                Text(
-                    text = "Copilot API is free - no key required!",
-                    color = MaterialTheme.colorScheme.primary,
-                    fontSize = 13.sp,
-                    modifier = Modifier.padding(top = 8.dp)
-                )
-            } else if (prefs.getString("provider_type", ProviderType.GEMINI) == ProviderType.CODEX_API) {
-                Text(
-                    text = "CodexAPI is free - no key required!",
-                    color = MaterialTheme.colorScheme.primary,
-                    fontSize = 13.sp,
-                    modifier = Modifier.padding(top = 8.dp)
-                )
             }
+        }
         }
 
         Spacer(modifier = Modifier.height(rhythm.cardGap))

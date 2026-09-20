@@ -9,4 +9,9 @@ object ProviderType {
 
     private val VALID = setOf(GEMINI, GROQ, CODEX_API, COPILOT, CUSTOM)
     fun sanitize(value: String?): String = if (value in VALID) value!! else GEMINI
+
+    fun requiresApiKey(value: String?): Boolean = when (sanitize(value)) {
+        CODEX_API, COPILOT -> false
+        else -> true
+    }
 }

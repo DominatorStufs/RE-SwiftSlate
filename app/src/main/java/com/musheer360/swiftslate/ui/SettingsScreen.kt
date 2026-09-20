@@ -24,6 +24,7 @@ import androidx.compose.ui.unit.sp
 import com.musheer360.swiftslate.BuildConfig
 import com.musheer360.swiftslate.R
 import com.musheer360.swiftslate.api.ApiClientUtils
+import com.musheer360.swiftslate.api.CodexApiClient
 import com.musheer360.swiftslate.api.GeminiClient
 import com.musheer360.swiftslate.api.OpenAICompatibleClient
 import kotlinx.coroutines.Dispatchers
@@ -31,11 +32,10 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import com.musheer360.swiftslate.api.CodexApiClient
-import com.musheer360.swiftslate.api.CopilotApiClient
 import com.musheer360.swiftslate.manager.CommandManager
 import com.musheer360.swiftslate.manager.KeyManager
 import com.musheer360.swiftslate.manager.ProviderModelsCache
+import com.musheer360.swiftslate.model.CodexApiModels
 import com.musheer360.swiftslate.model.GeminiModels
 import com.musheer360.swiftslate.model.GroqModels
 import com.musheer360.swiftslate.model.PrefKeys
@@ -45,6 +45,7 @@ import com.musheer360.swiftslate.provider.GroqConfig
 import com.musheer360.swiftslate.ui.components.LocalSlateRhythm
 import com.musheer360.swiftslate.ui.components.ScreenTitle
 import com.musheer360.swiftslate.ui.components.SlateCard
+import com.musheer360.swiftslate.ui.components.SlateDivider
 import com.musheer360.swiftslate.ui.components.SlateTextField
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -69,6 +70,10 @@ fun SettingsScreen(commandManager: CommandManager, prefs: SharedPreferences, key
     var groqModelExpanded by remember { mutableStateOf(false) }
     var groqModelList by remember { mutableStateOf(ProviderModelsCache.get(ProviderType.GROQ)?.models ?: emptyList()) }
 
+    var codexApiModel by remember { mutableStateOf(prefs.getString(PrefKeys.CODEX_API_MODEL, CodexApiModels.DEFAULT) ?: CodexApiModels.DEFAULT) }
+    var codexApiModelExpanded by remember { mutableStateOf(false) }
+    var codexApiModelList by remember { mutableStateOf(ProviderModelsCache.get(ProviderType.CODEX_API)?.models ?: CodexApiModels.FALLBACK) }
+
     var customEndpoint by rememberSaveable { mutableStateOf(prefs.getString(PrefKeys.CUSTOM_ENDPOINT, "") ?: "") }
     var customModel by rememberSaveable { mutableStateOf(prefs.getString(PrefKeys.CUSTOM_MODEL, "") ?: "") }
     var endpointError by remember { mutableStateOf<String?>(null) }
@@ -81,9 +86,11 @@ fun SettingsScreen(commandManager: CommandManager, prefs: SharedPreferences, key
     var fetchSuccess by remember { mutableStateOf(false) }
     var isFetchingGeminiModels by remember { mutableStateOf(false) }
     var isFetchingGroqModels by remember { mutableStateOf(false) }
+    var isFetchingCodexApiModels by remember { mutableStateOf(false) }
     var apiKeys by remember { mutableStateOf<List<String>>(emptyList()) }
     val openAIClient = remember { OpenAICompatibleClient() }
     val geminiClient = remember { GeminiClient() }
+    val codexApiClient = remember { CodexApiClient() }
 
     var triggerPrefix by remember { mutableStateOf(commandManager.getTriggerPrefix()) }
     var prefixError by remember { mutableStateOf<String?>(null) }
@@ -160,11 +167,32 @@ fun SettingsScreen(commandManager: CommandManager, prefs: SharedPreferences, key
         }
     }
 
+    fun startCodexModelFetch() {
+        if (isFetchingCodexApiModels) return
+        isFetchingCodexApiModels = true
+        scope.launch {
+            val result = withContext(Dispatchers.IO) { codexApiClient.fetchModels() }
+            val models = result.getOrNull().orEmpty().ifEmpty { CodexApiModels.FALLBACK }
+            ProviderModelsCache.put(ProviderType.CODEX_API, ProviderModelsCache.Entry(models, attempted = true))
+            codexApiModelList = models
+            if (codexApiModel.isBlank()) {
+                codexApiModel = CodexApiModels.DEFAULT
+                prefs.edit().putString(PrefKeys.CODEX_API_MODEL, CodexApiModels.DEFAULT).apply()
+            }
+            isFetchingCodexApiModels = false
+        }
+    }
+
     // Auto-fetch once per session per provider (issue #148): fires when Settings shows
     // a Gemini/Groq provider whose list has never been fetched this process — including
     // the no-key case, so it runs automatically once a first key is added.
     LaunchedEffect(providerType, apiKeys) {
-        if (providerType == ProviderType.GEMINI || providerType == ProviderType.GROQ) {
+        if (providerType == ProviderType.CODEX_API) {
+            val cached = ProviderModelsCache.get(providerType)
+            if (cached == null || !cached.attempted) {
+                startCodexModelFetch()
+            }
+        } else if (providerType == ProviderType.GEMINI || providerType == ProviderType.GROQ) {
             val cached = ProviderModelsCache.get(providerType)
             if (apiKeys.isNotEmpty() && (cached == null || !cached.attempted)) {
                 startModelFetch(providerType)
@@ -175,20 +203,6 @@ fun SettingsScreen(commandManager: CommandManager, prefs: SharedPreferences, key
     var backupMessage by remember { mutableStateOf<String?>(null) }
     var backupSuccess by remember { mutableStateOf(false) }
     var showImportConfirm by remember { mutableStateOf(false) }
-
-    val codexApiClient = remember { CodexApiClient() }
-    val copilotApiClient = remember { CopilotApiClient() }
-
-    LaunchedEffect(providerType) {
-        if (providerType == ProviderType.CODEX_API && codexApiModels.isEmpty()) {
-            loadingCodexModels = true
-            val result = codexApiClient.getAvailableModels()
-            if (result.isSuccess) {
-                codexApiModels = result.getOrNull() ?: emptyList()
-            }
-            loadingCodexModels = false
-        }
-    }
 
     DisposableEffect(Unit) {
         onDispose {
@@ -270,6 +284,7 @@ fun SettingsScreen(commandManager: CommandManager, prefs: SharedPreferences, key
     ) {
         ScreenTitle(stringResource(R.string.settings_title))
 
+        // Card 1: Provider + Model
         SlateCard {
             Text(
                 text = stringResource(R.string.settings_provider_title),
@@ -285,12 +300,13 @@ fun SettingsScreen(commandManager: CommandManager, prefs: SharedPreferences, key
                     value = when (providerType) {
                         ProviderType.GEMINI -> stringResource(R.string.settings_provider_gemini)
                         ProviderType.GROQ -> stringResource(R.string.settings_provider_groq)
-                        ProviderType.CODEX_API -> "CodexAPI (Free)"
-                        ProviderType.COPILOT -> "Copilot (Free - Unofficial)"
+                        ProviderType.CODEX_API -> stringResource(R.string.settings_provider_codex_api)
+                        ProviderType.COPILOT -> stringResource(R.string.settings_provider_copilot)
                         else -> stringResource(R.string.settings_provider_custom)
                     },
                     onValueChange = {},
                     readOnly = true,
+                    
                     modifier = Modifier.menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable)
                 )
                 ExposedDropdownMenu(
@@ -318,20 +334,20 @@ fun SettingsScreen(commandManager: CommandManager, prefs: SharedPreferences, key
                         }
                     )
                     DropdownMenuItem(
-                        text = { Text("CodexAPI (Free)") },
+                        text = { Text(stringResource(R.string.settings_provider_codex_api)) },
                         onClick = {
                             haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                             providerType = ProviderType.CODEX_API
-                            prefs.edit().putString("provider_type", ProviderType.CODEX_API).apply()
+                            prefs.edit().putString(PrefKeys.PROVIDER_TYPE, ProviderType.CODEX_API).remove(PrefKeys.STRUCTURED_OUTPUT_DISABLED_AT).apply()
                             providerExpanded = false
                         }
                     )
                     DropdownMenuItem(
-                        text = { Text("Copilot (Free - Unofficial)") },
+                        text = { Text(stringResource(R.string.settings_provider_copilot)) },
                         onClick = {
                             haptic.performHapticFeedback(HapticFeedbackType.LongPress)
                             providerType = ProviderType.COPILOT
-                            prefs.edit().putString("provider_type", ProviderType.COPILOT).apply()
+                            prefs.edit().putString(PrefKeys.PROVIDER_TYPE, ProviderType.COPILOT).remove(PrefKeys.STRUCTURED_OUTPUT_DISABLED_AT).apply()
                             providerExpanded = false
                         }
                     )
@@ -403,6 +419,60 @@ fun SettingsScreen(commandManager: CommandManager, prefs: SharedPreferences, key
                     isFetching = isFetchingGroqModels,
                     fetchingText = fetchingModelsMsg
                 )
+            } else if (providerType == ProviderType.CODEX_API) {
+                Text(
+                    text = stringResource(R.string.settings_model_title),
+                    fontSize = rhythm.bodySize,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.height(rhythm.formGap))
+                DynamicModelDropdown(
+                    selectedModelId = codexApiModel,
+                    selectedModelLabel = CodexApiModels.displayName(codexApiModel),
+                    enabled = true,
+                    expanded = codexApiModelExpanded,
+                    onExpandedChange = { isOpening ->
+                        codexApiModelExpanded = isOpening
+                        if (isOpening && !isFetchingCodexApiModels) {
+                            startCodexModelFetch()
+                        }
+                    },
+                    models = codexApiModelList,
+                    onSelect = { id ->
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                        codexApiModel = id
+                        prefs.edit().putString(PrefKeys.CODEX_API_MODEL, id).remove(PrefKeys.STRUCTURED_OUTPUT_DISABLED_AT).apply()
+                        codexApiModelExpanded = false
+                    },
+                    onDismiss = { codexApiModelExpanded = false },
+                    isFetching = isFetchingCodexApiModels,
+                    fetchingText = fetchingModelsMsg,
+                    displayText = { CodexApiModels.displayName(it) }
+                )
+                Text(
+                    text = stringResource(R.string.settings_keyless_provider_note),
+                    fontSize = rhythm.bodySize,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = rhythm.formGap)
+                )
+            } else if (providerType == ProviderType.COPILOT) {
+                Text(
+                    text = stringResource(R.string.settings_model_title),
+                    fontSize = rhythm.bodySize,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.height(rhythm.formGap))
+                SlateTextField(
+                    value = "copilot",
+                    onValueChange = {},
+                    readOnly = true
+                )
+                Text(
+                    text = stringResource(R.string.settings_keyless_provider_note),
+                    fontSize = rhythm.bodySize,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = rhythm.formGap)
+                )
             } else {
                 Text(
                     text = stringResource(R.string.settings_endpoint_title),
@@ -433,6 +503,7 @@ fun SettingsScreen(commandManager: CommandManager, prefs: SharedPreferences, key
                         }
                     },
                     placeholder = { Text(stringResource(R.string.settings_endpoint_placeholder)) },
+                    
                     isError = endpointError != null
                 )
                 endpointError?.let { msg ->
@@ -604,6 +675,7 @@ fun SettingsScreen(commandManager: CommandManager, prefs: SharedPreferences, key
 
         Spacer(modifier = Modifier.height(rhythm.cardGap))
 
+        // Card 2: Trigger Prefix
         SlateCard {
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -624,18 +696,16 @@ fun SettingsScreen(commandManager: CommandManager, prefs: SharedPreferences, key
                         prefixError = when {
                             filtered.length != 1 -> prefixErrorLength
                             filtered[0].isWhitespace() -> prefixErrorWhitespace
-                            !filtered[0].isLetterOrDigit() && filtered != "#" && filtered != "@" && filtered != "!" -> prefixErrorAlphanumeric
-                            else -> null
-                        }
-                        if (prefixError == null) {
-                            commandManager.setTriggerPrefix(filtered)
-                            prefs.edit().putString("trigger_prefix", filtered).apply()
+                            filtered[0].isLetterOrDigit() -> prefixErrorAlphanumeric
+                            else -> {
+                                haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                commandManager.setTriggerPrefix(filtered)
+                                null
+                            }
                         }
                     },
-                    placeholder = { Text(triggerPrefix) },
-                    singleLine = true,
-                    modifier = Modifier.width(60.dp),
-                    isError = prefixError != null
+                    isError = prefixError != null,
+                    modifier = Modifier.width(64.dp)
                 )
             }
             prefixError?.let { msg ->
@@ -650,6 +720,7 @@ fun SettingsScreen(commandManager: CommandManager, prefs: SharedPreferences, key
 
         Spacer(modifier = Modifier.height(rhythm.cardGap))
 
+        // Card 3: Backup
         SlateCard {
             Text(
                 text = stringResource(R.string.backup_desc),
@@ -658,12 +729,33 @@ fun SettingsScreen(commandManager: CommandManager, prefs: SharedPreferences, key
             )
             Spacer(modifier = Modifier.height(rhythm.groupGap))
             Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable { exportLauncher.launch("commands.json") }
-                    .padding(vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
+                Button(
+                    onClick = {
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                        backupMessage = null
+                        exportLauncher.launch("swiftslate-commands.json")
+                    },
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier.weight(1f).heightIn(min = 48.dp)
+                ) {
+                    Text(stringResource(R.string.backup_export))
+                }
+                Button(
+                    onClick = {
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                        backupMessage = null
+                        showImportConfirm = true
+                    },
+                    shape = RoundedCornerShape(10.dp),
+                    modifier = Modifier.weight(1f).heightIn(min = 48.dp)
+                ) {
+                    Text(stringResource(R.string.backup_import))
+                }
+            }
+            backupMessage?.let { msg ->
                 Text(
                     text = msg,
                     color = if (backupSuccess) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.error,
@@ -781,7 +873,9 @@ internal fun preferredModel(models: List<String>, default: String): String =
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun DynamicModelDropdown(
-    selectedModel: String,
+    selectedModel: String = "",
+    selectedModelId: String = selectedModel,
+    selectedModelLabel: String = selectedModel,
     enabled: Boolean,
     expanded: Boolean,
     onExpandedChange: (Boolean) -> Unit,
@@ -789,7 +883,8 @@ private fun DynamicModelDropdown(
     onSelect: (String) -> Unit,
     onDismiss: () -> Unit,
     isFetching: Boolean,
-    fetchingText: String
+    fetchingText: String,
+    displayText: (String) -> String = { it }
 ) {
     val rhythm = LocalSlateRhythm.current
     ExposedDropdownMenuBox(
@@ -797,7 +892,7 @@ private fun DynamicModelDropdown(
         onExpandedChange = { if (enabled) onExpandedChange(it) }
     ) {
         SlateTextField(
-            value = selectedModel,
+            value = selectedModelLabel,
             onValueChange = {},
             readOnly = true,
             modifier = Modifier.menuAnchor(ExposedDropdownMenuAnchorType.PrimaryNotEditable)
@@ -842,8 +937,8 @@ private fun DynamicModelDropdown(
                     DropdownMenuItem(
                         text = {
                             Text(
-                                text = id,
-                                color = if (id == selectedModel) {
+                                text = displayText(id),
+                                color = if (id == selectedModelId) {
                                     MaterialTheme.colorScheme.primary
                                 } else {
                                     MaterialTheme.colorScheme.onSurface

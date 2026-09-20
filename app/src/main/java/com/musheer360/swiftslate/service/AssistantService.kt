@@ -18,8 +18,6 @@ import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import com.musheer360.swiftslate.api.GeminiClient
 import com.musheer360.swiftslate.api.OpenAICompatibleClient
-import com.musheer360.swiftslate.api.CodexApiClient
-import com.musheer360.swiftslate.api.CopilotApiClient
 import com.musheer360.swiftslate.manager.CommandManager
 import com.musheer360.swiftslate.manager.KeyManager
 import com.musheer360.swiftslate.manager.StatsManager
@@ -54,8 +52,6 @@ class AssistantService : AccessibilityService() {
     private lateinit var statsManager: StatsManager
     private val client = GeminiClient()
     private val openAIClient = OpenAICompatibleClient()
-    private val codexApiClient = CodexApiClient()
-    private val copilotApiClient = CopilotApiClient()
     private val serviceJob = SupervisorJob()
     // Any exception escaping a coroutine launched from the accessibility service would kill
     // the whole process with no UI to crash into (the Settings toggle stays "on" regardless,

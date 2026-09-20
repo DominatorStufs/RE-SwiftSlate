@@ -128,7 +128,7 @@ Pure black (`#000000`) Material 3 interface designed for OLED screens — saves 
 <td width="50%">
 
 ### 🤖 Multi-Provider AI
-Ships with Google Gemini, Groq, or connect **any OpenAI-compatible endpoint** — cloud providers, or **local LLMs** like [Ollama](https://ollama.com), [LM Studio](https://lmstudio.ai), and others running on your network.
+Ships with Google Gemini, Groq, **Codex API**, **Unofficial Copilot API**, or connect **any OpenAI-compatible endpoint** — cloud providers, or **local LLMs** like [Ollama](https://ollama.com), [LM Studio](https://lmstudio.ai), and others running on your network.
 
 ### 🛠️ Two Command Types
 **AI commands** send text to your provider for intelligent transformation. **Text replacer commands** run entirely offline for instant local text manipulation — no API key needed.
@@ -223,10 +223,15 @@ Beyond AI, you can create **text replacer commands** that run **entirely offline
 |:---------|:-------|:------|
 | **Google Gemini** (default) | `gemini-3.5-flash-lite` (default), `gemini-3.6-flash` | Free tier available at [aistudio.google.com](https://aistudio.google.com) |
 | **Groq** | `openai/gpt-oss-120b` (default), `qwen/qwen3.6-27b` | Free tier at [console.groq.com](https://console.groq.com/keys) |
+| **Codex API** | Random model selection or a chosen model from `/models` | Free/keyless community endpoint. Credit: [@nepcodexcc](https://t.me/nepcodexcc) |
+| **Unofficial Copilot API** | `copilot` | Free/keyless JSON POST to `/v1/chat/completions`. Credit: [@nepcodexcc](https://t.me/nepcodexcc) |
 | **Custom (OpenAI-compatible)** | Any model your endpoint supports | Works with Ollama, LM Studio, vLLM, any `/v1/chat/completions` endpoint |
 
 > [!TIP]
 > For local LLMs, set the endpoint to your machine's local address (e.g., `http://localhost:11434/v1` for Ollama). HTTP is allowed for `localhost`, `127.0.0.1`, and `10.0.2.2`.
+
+> [!NOTE]
+> Codex API and Unofficial Copilot API are third-party community endpoints added in this fork. They require no API key, but availability, privacy policy, quota, and model behavior are controlled by the endpoint owner, not SwiftSlate.
 
 <br>
 
@@ -763,18 +768,6 @@ This project is licensed under the **MIT License** — see the [LICENSE](LICENSE
 <br>
 
 ---
-<br>
-
-## 🤖 Additional AI Providers Added
-
-SwiftSlate ab support karta hai **Codex API** aur **Unofficial Copilot API**, jo free AI endpoints hain aur tumhare custom needs ke liye integrate kiye gaye hain.
-
-| Provider | Notes | API Owner / Credit |
-|:---------|:------|:-----------------|
-| **Codex API** | Free AI endpoint, random model selection | [@nepcodexcc](https://t.me/nepcodexcc) |
-| **Unofficial Copilot API** | Free AI endpoint, JSON POST to `/v1/chat/completions` | [@nepcodexcc](https://t.me/nepcodexcc) |
-
-> [!NOTE] Ye APIs add kiye gaye hai while keeping all previous AI providers intact. Codex aur Copilot ke liye credit jaata hai [@nepcodexcc](https://t.me/nepcodexcc).
 
 <div align="center">
 

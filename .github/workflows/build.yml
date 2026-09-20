@@ -38,7 +38,7 @@ concurrency:
   cancel-in-progress: true
 
 permissions:
-  contents: write
+  contents: read
 
 env:
   GRADLE_OPTS: -Dorg.gradle.jvmargs="-Xmx3g -Dfile.encoding=UTF-8 -XX:+UseG1GC"
@@ -62,15 +62,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-
-      - name: Set up JDK 21
-        uses: actions/setup-java@v4
-        with:
-          java-version: '21'
-          distribution: 'temurin'
-
-      - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
+          fetch-tags: true
 
       - name: Determine version
         id: version
@@ -121,11 +113,11 @@ jobs:
 
           VERSION_NAME="${TAG#v}"
           VERSION_CODE=$(git rev-list --count HEAD)
-          VERSION_NAME="1.0.${VERSION_CODE}"
-          TAG="v${VERSION_NAME}"
-          echo "version_code=$VERSION_CODE" >> "$GITHUB_OUTPUT"
-          echo "version_name=$VERSION_NAME" >> "$GITHUB_OUTPUT"
+
           echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version_name=$VERSION_NAME" >> "$GITHUB_OUTPUT"
+          echo "version_code=$VERSION_CODE" >> "$GITHUB_OUTPUT"
+          echo "create_tag=${CREATE_TAG}" >> "$GITHUB_OUTPUT"
 
   lint:
     name: Lint
@@ -314,10 +306,10 @@ jobs:
         run: mv app/build/outputs/apk/release/app-release.apk "app/build/outputs/apk/release/SwiftSlate-${TAG}.apk"
 
       - name: Upload APK artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: SwiftSlate-${{ steps.version.outputs.tag }}
-          path: app/build/outputs/apk/debug/SwiftSlate-*.apk
+          name: SwiftSlate-${{ needs.version.outputs.tag }}
+          path: app/build/outputs/apk/release/SwiftSlate-*.apk
           retention-days: 90
 
   tag:

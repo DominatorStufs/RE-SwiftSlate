@@ -1,5 +1,6 @@
 package com.musheer360.swiftslate.provider
 
+import com.musheer360.swiftslate.model.CodexApiModels
 import com.musheer360.swiftslate.model.GeminiModels
 import com.musheer360.swiftslate.model.GroqModels
 import com.musheer360.swiftslate.model.PrefKeys
@@ -14,6 +15,8 @@ class ProviderConfigTest {
     fun forType_routes_each_provider() {
         assertSame(GeminiConfig, Providers.forType(ProviderType.GEMINI))
         assertSame(GroqConfig, Providers.forType(ProviderType.GROQ))
+        assertSame(CodexApiConfig, Providers.forType(ProviderType.CODEX_API))
+        assertSame(CopilotConfig, Providers.forType(ProviderType.COPILOT))
         assertSame(CustomConfig, Providers.forType(ProviderType.CUSTOM))
     }
 
@@ -27,6 +30,8 @@ class ProviderConfigTest {
     fun transports_are_correct() {
         assertEquals(Transport.GEMINI_NATIVE, GeminiConfig.transport)
         assertEquals(Transport.OPENAI_COMPAT, GroqConfig.transport)
+        assertEquals(Transport.CODEX_API, CodexApiConfig.transport)
+        assertEquals(Transport.COPILOT_API, CopilotConfig.transport)
         assertEquals(Transport.OPENAI_COMPAT, CustomConfig.transport)
     }
 
@@ -34,15 +39,21 @@ class ProviderConfigTest {
     fun model_pref_keys_and_defaults() {
         assertEquals(PrefKeys.GEMINI_MODEL, GeminiConfig.modelPrefKey)
         assertEquals(PrefKeys.GROQ_MODEL, GroqConfig.modelPrefKey)
+        assertEquals(PrefKeys.CODEX_API_MODEL, CodexApiConfig.modelPrefKey)
+        assertEquals(PrefKeys.COPILOT_MODEL, CopilotConfig.modelPrefKey)
         assertEquals(PrefKeys.CUSTOM_MODEL, CustomConfig.modelPrefKey)
         assertEquals(GeminiModels.DEFAULT, GeminiConfig.defaultModel)
         assertEquals(GroqModels.DEFAULT, GroqConfig.defaultModel)
+        assertEquals(CodexApiModels.DEFAULT, CodexApiConfig.defaultModel)
+        assertEquals(CopilotConfig.MODEL, CopilotConfig.defaultModel)
         assertEquals("", CustomConfig.defaultModel)
     }
 
     @Test
     fun endpoint_resolution() {
         assertEquals(GroqConfig.ENDPOINT, GroqConfig.resolveEndpoint("ignored"))
+        assertEquals(CodexApiConfig.ENDPOINT, CodexApiConfig.resolveEndpoint("ignored"))
+        assertEquals(CopilotConfig.ENDPOINT, CopilotConfig.resolveEndpoint("ignored"))
         assertEquals("", GeminiConfig.resolveEndpoint("ignored"))
         assertEquals("https://my.endpoint/v1", CustomConfig.resolveEndpoint("https://my.endpoint/v1"))
     }
@@ -52,6 +63,8 @@ class ProviderConfigTest {
         assertTrue(GroqConfig.useJsonObjectMode(true))
         assertFalse(GroqConfig.useJsonObjectMode(false))
         assertFalse(GeminiConfig.useJsonObjectMode(true))
+        assertFalse(CodexApiConfig.useJsonObjectMode(true))
+        assertFalse(CopilotConfig.useJsonObjectMode(true))
         assertFalse(CustomConfig.useJsonObjectMode(true))
     }
 
@@ -59,6 +72,8 @@ class ProviderConfigTest {
     fun isConfigured_only_custom_requires_both() {
         assertTrue(GeminiConfig.isConfigured("", ""))
         assertTrue(GroqConfig.isConfigured("m", ""))
+        assertTrue(CodexApiConfig.isConfigured("", ""))
+        assertTrue(CopilotConfig.isConfigured("", ""))
         assertTrue(CustomConfig.isConfigured("m", "https://x"))
         assertFalse(CustomConfig.isConfigured("", "https://x"))
         assertFalse(CustomConfig.isConfigured("m", ""))
@@ -69,6 +84,17 @@ class ProviderConfigTest {
     fun custom_model_is_trimmed_and_null_safe() {
         assertEquals("gpt-4o", CustomConfig.sanitizeModel("  gpt-4o  "))
         assertEquals("", CustomConfig.sanitizeModel(null))
+    }
+
+    @Test
+    fun keyless_provider_flags_and_models_are_correct() {
+        assertFalse(CodexApiConfig.requiresApiKey)
+        assertFalse(CopilotConfig.requiresApiKey)
+        assertTrue(GeminiConfig.requiresApiKey)
+        assertTrue(GroqConfig.requiresApiKey)
+        assertEquals(CodexApiModels.DEFAULT, CodexApiConfig.sanitizeModel(null))
+        assertEquals("gpt-5", CodexApiConfig.sanitizeModel("  gpt-5  "))
+        assertEquals(CopilotConfig.MODEL, CopilotConfig.sanitizeModel("anything"))
     }
 
     @Test
@@ -90,6 +116,8 @@ class ProviderConfigTest {
         assertNull(CustomConfig.thinkingLevel("anything"))
         // Non-Groq providers add no reasoning params.
         assertTrue(GeminiConfig.reasoningParams("x").isEmpty())
+        assertTrue(CodexApiConfig.reasoningParams("x").isEmpty())
+        assertTrue(CopilotConfig.reasoningParams("x").isEmpty())
         assertTrue(CustomConfig.reasoningParams("x").isEmpty())
     }
 
