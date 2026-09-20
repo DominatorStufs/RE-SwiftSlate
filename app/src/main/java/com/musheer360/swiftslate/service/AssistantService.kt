@@ -108,6 +108,17 @@ class AssistantService : AccessibilityService() {
      */
     private fun sourceId(source: AccessibilityNodeInfo): String = source.hashCode().toString()
 
+    private fun AccessibilityNodeInfo.isWritableTextNode(): Boolean {
+        return try {
+            isEditable || actionList.any { action ->
+                action.id == AccessibilityNodeInfo.ACTION_SET_TEXT ||
+                    action.id == AccessibilityNodeInfo.ACTION_PASTE
+            }
+        } catch (_: Exception) {
+            false
+        }
+    }
+
     private companion object {
         const val TAG = "SwiftSlateService"
         const val TRIGGER_REFRESH_INTERVAL_MS = 5_000L
@@ -199,20 +210,35 @@ class AssistantService : AccessibilityService() {
         // active window before giving up — see #125 / #131. The root lookup is a binder call on
         // the main thread, so it is throttled: hosts that flood null-source events are rare, and
         // skipping an occasional event is harmless for trigger detection.
-        val source = event.source ?: run {
+        var source = event.source ?: run {
             val now = SystemClock.elapsedRealtime()
             if (now - lastFocusFallbackAt < FOCUS_FALLBACK_MIN_INTERVAL_MS) return
             lastFocusFallbackAt = now
             findFocusedEditableSource()
         } ?: return
+
+        // Some apps dispatch text-change events from a wrapper/container node instead of the
+        // actual editable field. A container can expose the changed text but reject SET_TEXT,
+        // making every command look like it was ignored. Prefer the focused editable node when
+        // the event source itself is not writable.
+        if (!source.isWritableTextNode()) {
+            val focused = findFocusedEditableSource()
+            if (focused != null && focused !== source) {
+                source.safeRecycle()
+                source = focused
+            }
+        }
+
         if (source.isPassword) {
             source.safeRecycle()
             return
         }
-        val text = source.text?.toString() ?: run {
-            source.safeRecycle()
-            return
-        }
+        val text = source.text?.toString()
+            ?: event.text?.lastOrNull()?.toString()
+            ?: run {
+                source.safeRecycle()
+                return
+            }
         if (handlePendingProcessTextReplacement(event, source, text)) return
         if (isProcessing.get()) {
             source.safeRecycle()
