@@ -3,11 +3,11 @@ package com.musheer360.swiftslate.model
 /**
  * Codex API model catalogue helpers.
  *
- * The community endpoint's `/models` route is currently unreliable from Android/non-browser
- * clients, so SwiftSlate ships a known-good catalogue. This list was checked against the live
- * endpoint and only keeps models that returned a non-empty answer; models that returned an empty
- * `answer` are deliberately hidden so users do not get "request failed" for a bad selection.
- * `random` means SwiftSlate omits the model parameter and lets the API choose.
+ * The community endpoint exposes an OpenAI-compatible `/v1/models` list, but that list also
+ * contains models that are not allowed for public use or are already end-of-life. SwiftSlate
+ * therefore filters Settings to the models that returned a non-empty answer in live checks, so
+ * users do not get "request failed" for a bad selection. `random` means SwiftSlate randomly picks
+ * one of those verified working models for the request.
  */
 object CodexApiModels {
     const val RANDOM_MODEL_ID = "random"
@@ -44,6 +44,11 @@ object CodexApiModels {
     fun sanitize(value: String?): String {
         val trimmed = value?.trim().orEmpty()
         return if (trimmed.isNotEmpty() && isSupported(trimmed)) trimmed else DEFAULT
+    }
+
+    fun requestModel(value: String?): String {
+        val sanitized = sanitize(value)
+        return if (sanitized == RANDOM_MODEL_ID) FALLBACK.drop(1).random() else sanitized
     }
 
     fun displayName(model: String): String =

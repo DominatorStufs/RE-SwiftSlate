@@ -43,6 +43,15 @@ class CommandManagerTest {
     }
 
     @Test
+    fun findCommand_withFlirtTrigger_returnsFlirtCommand() {
+        val result = commandManager.findCommand("miss you?flirt")
+        assertNotNull(result)
+        assertEquals("?flirt", result!!.trigger)
+        assertTrue(result.prompt.contains("flirty tone"))
+        assertTrue(result.prompt.contains("exactly 2 relevant emojis"))
+    }
+
+    @Test
     fun findCommand_withUndoTrigger_returnsUndoCommand() {
         val result = commandManager.findCommand("text?undo")
         assertNotNull(result)
@@ -90,9 +99,9 @@ class CommandManagerTest {
     // --- getCommands ---
 
     @Test
-    fun getCommands_returnsFifteenBuiltInByDefault() {
+    fun getCommands_returnsSixteenBuiltInByDefault() {
         val commands = commandManager.getCommands()
-        assertEquals(15, commands.size)
+        assertEquals(16, commands.size)
     }
 
     @Test
@@ -107,9 +116,9 @@ class CommandManagerTest {
     @Test
     fun getCommands_aiCommandsHaveIsBuiltInFalse() {
         val commands = commandManager.getCommands()
-        val aiTriggers = listOf("?fix", "?improve", "?shorten", "?expand", "?formal", "?casual", "?emoji", "?human", "?reply")
+        val aiTriggers = listOf("?fix", "?improve", "?shorten", "?expand", "?formal", "?casual", "?emoji", "?human", "?reply", "?flirt")
         val aiCommands = commands.filter { it.trigger in aiTriggers }
-        assertEquals(9, aiCommands.size)
+        assertEquals(10, aiCommands.size)
         assertTrue(aiCommands.all { !it.isBuiltIn })
     }
 
@@ -117,7 +126,7 @@ class CommandManagerTest {
     fun getCommands_afterAddingCustom_includesIt() {
         commandManager.saveCustomCommand(Command("?myCmd", "do something"))
         val commands = commandManager.getCommands()
-        assertEquals(16, commands.size)
+        assertEquals(17, commands.size)
         assertTrue(commands.any { it.trigger == "?myCmd" })
     }
 
